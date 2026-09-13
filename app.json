@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Negrito",
-    "slug": "Negrito",
+    "name": "EPL",
+    "slug": "epl",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -10,6 +10,7 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.eplchile.app",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -19,6 +20,22 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "f1a152e8-ec08-477a-8e2d-bb46050e1eba"
+      }
+    },
+    "owner": "epl-chile",
+    "sdkVersion": "57.0.0",
+    "runtimeVersion": {
+      "policy": "sdkVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/f1a152e8-ec08-477a-8e2d-bb46050e1eba",
+      "enabled": true,
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 10000
     }
   }
 }
