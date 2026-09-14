@@ -39,13 +39,6 @@ function formatDateChile(date) {
   return (dd < 10 ? '0' + dd : dd) + '/' + (mm < 10 ? '0' + mm : mm) + '/' + date.getFullYear().toString().substring(2);
 }
 
-const getInitials = (name) => {
-  if (!name) return 'A';
-  const parts = name.trim().split(/\s+/);
-  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
-  return parts[0].substring(0, 2).toUpperCase();
-};
-
 export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
   const { theme, isDark } = useTheme();
   const styles = getStyles(theme);
@@ -53,12 +46,17 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
   const [selectedAtletaId, setSelectedAtletaId] = useState(null);
   const [selectedPeriod, setSelectedPeriod] = useState(1);
   const [activeWeekIndex, setActiveWeekIndex] = useState(0);
-  const [selectedMetric, setSelectedMetric] = useState('distancia');
+  const [selectedMetric, setSelectedMetric] = useState('distancia'); // 'distancia' | 'duracion' | 'tss' | 'ecos'
   
+  // Modal state
   const [showInputModal, setShowInputModal] = useState(false);
   const [compNatMeters, setCompNatMeters] = useState('');
   const [compCicHours, setCompCicHours] = useState('');
   const [compCarHours, setCompCarHours] = useState('');
+  const [planTssInput, setPlanTssInput] = useState('');
+  const [realTssInput, setRealTssInput] = useState('');
+  const [planEcosInput, setPlanEcosInput] = useState('');
+  const [realEcosInput, setRealEcosInput] = useState('');
   const [coachNotes, setCoachNotes] = useState('');
   const [breakdownCounts, setBreakdownCounts] = useState({
     green: '3',
@@ -68,6 +66,16 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
     extra: '1'
   });
 
+  // Report customization state (what sections to include in PDF and WhatsApp)
+  const [reportOptions, setReportOptions] = useState({
+    distance: true,
+    duration: true,
+    tss: false,
+    ecos: false,
+    breakdown: true,
+    notes: true
+  });
+
   useEffect(() => {
     if (atletas && atletas.length > 0 && !selectedAtletaId) {
       setSelectedAtletaId(atletas[0].id);
@@ -75,6 +83,28 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
   }, [atletas]);
 
   const selectedAthlete = (atletas || []).find(a => a.id === selectedAtletaId) || (atletas && atletas[0]) || null;
+
+  // Load athlete report options if saved
+  useEffect(() => {
+    if (selectedAthlete?.complianceReportOptions) {
+      setReportOptions(selectedAthlete.complianceReportOptions);
+    }
+  }, [selectedAthlete?.id]);
+
+  const toggleReportOption = (key) => {
+    setReportOptions(prev => {
+      const updated = { ...prev, [key]: !prev[key] };
+      // Save in athlete profile if available
+      if (selectedAthlete && onSaveCumplimiento) {
+        const updatedAthlete = {
+          ...selectedAthlete,
+          complianceReportOptions: updated
+        };
+        onSaveCumplimiento(updatedAthlete, activeWeekIndex + 1);
+      }
+      return updated;
+    });
+  };
 
   const plan = selectedAthlete?.plan || {};
   const numMesos = plan.mesos || 3;
@@ -122,6 +152,10 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
     const currentMon = new Date(mondayStart.getTime());
     currentMon.setDate(currentMon.getDate() + (s - 1) * 7);
 
+    const totalMin = (weekSwimM / 100 * 2) + weekBikeMin + weekRunMin;
+    const defaultEcos = (weekSwimM / 100 * 2 * 0.75 * 2) + (weekBikeMin * 0.5 * 2) + (weekRunMin * 1.0 * 2);
+    const defaultTss = Math.round(totalMin * 0.65);
+
     calculatedWeeks.push({
       weekIndex: s - 1,
       semanaNum: s,
@@ -132,8 +166,9 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
         cicMin: weekBikeMin,
         carMin: weekRunMin,
         totalKm: (weekSwimM / 1000) + (weekBikeMin / 60 * 28) + (weekRunMin / 60 * 12),
-        totalMin: (weekSwimM / 100 * 2) + weekBikeMin + weekRunMin,
-        totalEcos: (weekSwimM / 100 * 2 * 0.75 * 2) + (weekBikeMin * 0.5 * 2) + (weekRunMin * 1.0 * 2)
+        totalMin: totalMin,
+        totalEcos: defaultEcos,
+        totalTss: defaultTss
       }
     });
   }
@@ -147,6 +182,8 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
   let aggCompletedKm = 0;
   let aggPlannedMin = 0;
   let aggCompletedMin = 0;
+  let aggPlannedTss = 0;
+  let aggCompletedTss = 0;
   let aggPlannedEcos = 0;
   let aggCompletedEcos = 0;
 
@@ -160,12 +197,11 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
   let aggBreakdown = { green: 0, yellow: 0, orange: 0, red: 0, extra: 0 };
 
   for (let w = startIdx; w <= endIdx; w++) {
-    const wPlan = calculatedWeeks[w]?.planned || { natM: 6000, cicMin: 300, carMin: 240, totalKm: 50, totalMin: 600, totalEcos: 400 };
+    const wPlan = calculatedWeeks[w]?.planned || { natM: 6000, cicMin: 300, carMin: 240, totalKm: 50, totalMin: 600, totalEcos: 400, totalTss: 350 };
     const wComp = complianceWeeks[w] || null;
 
     aggPlannedKm += wPlan.totalKm;
     aggPlannedMin += wPlan.totalMin;
-    aggPlannedEcos += wPlan.totalEcos;
 
     aggNatPlannedM += wPlan.natM;
     aggCicPlannedMin += wPlan.cicMin;
@@ -178,11 +214,22 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
 
       const cKm = (cNatM / 1000) + (cCicMin / 60 * 28) + (cCarMin / 60 * 12);
       const cMin = (cNatM / 100 * 2) + cCicMin + cCarMin;
-      const cEcos = (cNatM / 100 * 2 * 0.75 * 2) + (cCicMin * 0.5 * 2) + (cCarMin * 1.0 * 2);
+
+      // Planned & Completed TSS (Coach manual input or fallback)
+      const pTss = wComp.planTss !== undefined && wComp.planTss !== '' ? parseFloat(wComp.planTss) : wPlan.totalTss;
+      const cTss = wComp.realTss !== undefined && wComp.realTss !== '' ? parseFloat(wComp.realTss) : Math.round(cMin * 0.6);
+
+      // Planned & Completed ECOs (Coach manual input or fallback)
+      const pEcos = wComp.planEcos !== undefined && wComp.planEcos !== '' ? parseFloat(wComp.planEcos) : wPlan.totalEcos;
+      const cEcos = wComp.realEcos !== undefined && wComp.realEcos !== '' ? parseFloat(wComp.realEcos) : ((cNatM / 100 * 2 * 0.75 * 2) + (cCicMin * 0.5 * 2) + (cCarMin * 1.0 * 2));
+
+      aggPlannedTss += pTss;
+      aggCompletedTss += cTss;
+      aggPlannedEcos += pEcos;
+      aggCompletedEcos += cEcos;
 
       aggCompletedKm += cKm;
       aggCompletedMin += cMin;
-      aggCompletedEcos += cEcos;
 
       aggNatCompletedM += cNatM;
       aggCicCompletedMin += cCicMin;
@@ -199,7 +246,10 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
       const defaultFact = 0.84;
       aggCompletedKm += wPlan.totalKm * defaultFact;
       aggCompletedMin += wPlan.totalMin * defaultFact;
-      aggCompletedEcos += wPlan.totalEcos * defaultFact;
+      aggPlannedTss += wPlan.totalTss;
+      aggCompletedTss += Math.round(wPlan.totalTss * defaultFact);
+      aggPlannedEcos += wPlan.totalEcos;
+      aggCompletedEcos += Math.round(wPlan.totalEcos * defaultFact);
 
       aggNatCompletedM += wPlan.natM * defaultFact;
       aggCicCompletedMin += wPlan.cicMin * defaultFact;
@@ -213,6 +263,7 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
     }
   }
 
+  // Active Metric String & Pct calculation
   let currentPlannedStr = '';
   let currentCompletedStr = '';
   let currentPct = 0;
@@ -225,6 +276,10 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
     currentPlannedStr = formatHoursShort(aggPlannedMin);
     currentCompletedStr = formatHoursShort(aggCompletedMin);
     currentPct = aggPlannedMin > 0 ? Math.round((aggCompletedMin / aggPlannedMin) * 100) : 0;
+  } else if (selectedMetric === 'tss') {
+    currentPlannedStr = Math.round(aggPlannedTss) + ' TSS';
+    currentCompletedStr = Math.round(aggCompletedTss) + ' TSS';
+    currentPct = aggPlannedTss > 0 ? Math.round((aggCompletedTss / aggPlannedTss) * 100) : 0;
   } else {
     currentPlannedStr = Math.round(aggPlannedEcos) + ' ECOs';
     currentCompletedStr = Math.round(aggCompletedEcos) + ' ECOs';
@@ -258,12 +313,16 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
 
   const openRegisterModal = () => {
     const existing = complianceWeeks[activeWeekIndex];
-    const wPlan = calculatedWeeks[activeWeekIndex]?.planned || { natM: 6000, cicMin: 300, carMin: 240 };
+    const wPlan = calculatedWeeks[activeWeekIndex]?.planned || { natM: 6000, cicMin: 300, carMin: 240, totalEcos: 400, totalTss: 350 };
     
     if (existing) {
-      setCompNatMeters(String(existing.natM || ''));
-      setCompCicHours(String(existing.cicHours || ''));
-      setCompCarHours(String(existing.carHours || ''));
+      setCompNatMeters(String(existing.natM !== undefined ? existing.natM : ''));
+      setCompCicHours(String(existing.cicHours !== undefined ? existing.cicHours : ''));
+      setCompCarHours(String(existing.carHours !== undefined ? existing.carHours : ''));
+      setPlanTssInput(String(existing.planTss !== undefined ? existing.planTss : Math.round(wPlan.totalTss)));
+      setRealTssInput(String(existing.realTss !== undefined ? existing.realTss : ''));
+      setPlanEcosInput(String(existing.planEcos !== undefined ? existing.planEcos : Math.round(wPlan.totalEcos)));
+      setRealEcosInput(String(existing.realEcos !== undefined ? existing.realEcos : ''));
       setCoachNotes(existing.notes || '');
       setBreakdownCounts({
         green: String(existing.breakdown?.green ?? '3'),
@@ -276,6 +335,10 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
       setCompNatMeters(String(Math.round(wPlan.natM * 0.85)));
       setCompCicHours((wPlan.cicMin / 60 * 0.85).toFixed(1));
       setCompCarHours((wPlan.carMin / 60 * 0.85).toFixed(1));
+      setPlanTssInput(String(Math.round(wPlan.totalTss)));
+      setRealTssInput(String(Math.round(wPlan.totalTss * 0.85)));
+      setPlanEcosInput(String(Math.round(wPlan.totalEcos)));
+      setRealEcosInput(String(Math.round(wPlan.totalEcos * 0.85)));
       setCoachNotes('');
       setBreakdownCounts({
         green: '3',
@@ -301,6 +364,10 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
         natM: natVal,
         cicHours: cicVal,
         carHours: carVal,
+        planTss: planTssInput.trim() !== '' ? parseFloat(planTssInput) : '',
+        realTss: realTssInput.trim() !== '' ? parseFloat(realTssInput) : '',
+        planEcos: planEcosInput.trim() !== '' ? parseFloat(planEcosInput) : '',
+        realEcos: realEcosInput.trim() !== '' ? parseFloat(realEcosInput) : '',
         notes: coachNotes,
         breakdown: {
           green: parseInt(breakdownCounts.green) || 0,
@@ -315,7 +382,8 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
 
     const updatedAthlete = {
       ...selectedAthlete,
-      cumplimientoWeeks: updatedComplianceWeeks
+      cumplimientoWeeks: updatedComplianceWeeks,
+      complianceReportOptions: reportOptions
     };
 
     if (onSaveCumplimiento) {
@@ -329,25 +397,60 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
   const handleShareWhatsApp = async () => {
     if (!selectedAthlete) return;
     const periodLabel = selectedPeriod === 1 ? ('Semana ' + (activeWeekIndex + 1)) : (selectedPeriod + ' Semanas (Mesociclo)');
-    const msg = 
-      '📊 *REPORTE DE CUMPLIMIENTO DE ENTRENAMIENTO*\n' +
+    
+    // Overall primary comparison percentage
+    let primaryPct = currentPct;
+    if (reportOptions.distance) {
+      primaryPct = aggPlannedKm > 0 ? Math.round((aggCompletedKm / aggPlannedKm) * 100) : 0;
+    } else if (reportOptions.duration) {
+      primaryPct = aggPlannedMin > 0 ? Math.round((aggCompletedMin / aggPlannedMin) * 100) : 0;
+    }
+
+    let msg = '📊 *REPORTE DE CUMPLIMIENTO DE ENTRENAMIENTO*\n' +
       '👤 *Atleta:* ' + selectedAthlete.nombre + '\n' +
       '📅 *Periodo:* ' + periodLabel + '\n\n' +
-      '📈 *CUMPLIMIENTO GLOBAL: ' + currentPct + '% (' + getStatusLabel(currentPct) + ')*\n' +
-      '• *Distancia:* ' + aggCompletedKm.toFixed(1) + ' km / ' + aggPlannedKm.toFixed(1) + ' km\n' +
-      '• *Duración:* ' + formatHoursShort(aggCompletedMin) + ' / ' + formatHoursShort(aggPlannedMin) + '\n' +
-      '• *Carga:* ' + Math.round(aggCompletedEcos) + ' / ' + Math.round(aggPlannedEcos) + ' ECOs\n\n' +
-      '🏊 *Natación:* ' + (aggNatCompletedM / 1000).toFixed(1) + ' km / ' + (aggNatPlannedM / 1000).toFixed(1) + ' km (' + natPct + '%)\n' +
-      '🚴 *Ciclismo:* ' + (aggCicCompletedMin / 60).toFixed(1) + ' h / ' + (aggCicPlannedMin / 60).toFixed(1) + ' h (' + cicPct + '%)\n' +
-      '🏃 *Carrera:* ' + (aggCarCompletedMin / 60).toFixed(1) + ' h / ' + (aggCarPlannedMin / 60).toFixed(1) + ' h (' + carPct + '%)\n\n' +
-      '🎯 *Estado de Sesiones:*\n' +
-      '🟢 En Objetivo: ' + aggBreakdown.green + '\n' +
-      '🟡 Desviación >20%: ' + aggBreakdown.yellow + '\n' +
-      '🟠 No Completado: ' + aggBreakdown.orange + '\n' +
-      '🔴 Sin Registro: ' + aggBreakdown.red + '\n' +
-      '⚪ Extra: ' + aggBreakdown.extra + '\n\n' +
-      (coachNotes ? ('📝 *Comentarios del Entrenador:* ' + coachNotes + '\n\n') : '') +
-      '💪 ¡A seguir dándolo todo en el próximo microciclo! 🔥';
+      '📈 *CUMPLIMIENTO GLOBAL: ' + primaryPct + '% (' + getStatusLabel(primaryPct) + ')*\n';
+
+    // Selective metrics
+    if (reportOptions.distance) {
+      msg += '• *Distancia:* ' + aggCompletedKm.toFixed(1) + ' km / ' + aggPlannedKm.toFixed(1) + ' km\n';
+    }
+    if (reportOptions.duration) {
+      msg += '• *Duración:* ' + formatHoursShort(aggCompletedMin) + ' / ' + formatHoursShort(aggPlannedMin) + '\n';
+    }
+    if (reportOptions.tss) {
+      const tssPct = aggPlannedTss > 0 ? Math.round((aggCompletedTss / aggPlannedTss) * 100) : 0;
+      msg += '• *TSS (Stress):* ' + Math.round(aggCompletedTss) + ' / ' + Math.round(aggPlannedTss) + ' TSS (' + tssPct + '%)\n';
+    }
+    if (reportOptions.ecos) {
+      const ecosPct = aggPlannedEcos > 0 ? Math.round((aggCompletedEcos / aggPlannedEcos) * 100) : 0;
+      msg += '• *Carga ECOs:* ' + Math.round(aggCompletedEcos) + ' / ' + Math.round(aggPlannedEcos) + ' ECOs (' + ecosPct + '%)\n';
+    }
+
+    // Disciplines
+    if (reportOptions.distance || reportOptions.duration) {
+      msg += '\n🏊 *Natación:* ' + (aggNatCompletedM / 1000).toFixed(1) + ' km / ' + (aggNatPlannedM / 1000).toFixed(1) + ' km (' + natPct + '%)\n' +
+        '🚴 *Ciclismo:* ' + (aggCicCompletedMin / 60).toFixed(1) + ' h / ' + (aggCicPlannedMin / 60).toFixed(1) + ' h (' + cicPct + '%)\n' +
+        '🏃 *Carrera:* ' + (aggCarCompletedMin / 60).toFixed(1) + ' h / ' + (aggCarPlannedMin / 60).toFixed(1) + ' h (' + carPct + '%)\n';
+    }
+
+    // Session adherence
+    if (reportOptions.breakdown) {
+      msg += '\n🎯 *Estado de Sesiones:*\n' +
+        '🟢 En Objetivo: ' + aggBreakdown.green + '\n' +
+        '🟡 Desviación >20%: ' + aggBreakdown.yellow + '\n' +
+        '🟠 No Completado: ' + aggBreakdown.orange + '\n' +
+        '🔴 Sin Registro: ' + aggBreakdown.red + '\n' +
+        '⚪ Extra: ' + aggBreakdown.extra + '\n';
+    }
+
+    // Coach notes
+    const activeNote = complianceWeeks[activeWeekIndex]?.notes || coachNotes;
+    if (reportOptions.notes && activeNote) {
+      msg += '\n📝 *Comentarios del Entrenador:*\n' + activeNote + '\n';
+    }
+
+    msg += '\n💪 ¡A seguir dándolo todo en el próximo microciclo! 🔥';
 
     try {
       await Share.share({ message: msg });
@@ -371,6 +474,8 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
         completedKm: aggCompletedKm.toFixed(1),
         plannedDuration: formatHoursShort(aggPlannedMin),
         completedDuration: formatHoursShort(aggCompletedMin),
+        plannedTss: Math.round(aggPlannedTss),
+        completedTss: Math.round(aggCompletedTss),
         plannedEcos: Math.round(aggPlannedEcos),
         completedEcos: Math.round(aggCompletedEcos),
         natPlanned: (aggNatPlannedM / 1000).toFixed(1) + ' km',
@@ -383,11 +488,12 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
         carCompleted: (aggCarCompletedMin / 60).toFixed(1) + ' h',
         carPct,
         breakdown: aggBreakdown,
-        coachNotes: complianceWeeks[activeWeekIndex]?.notes || '',
+        coachNotes: complianceWeeks[activeWeekIndex]?.notes || coachNotes || '',
         calculatedWeeks,
         complianceWeeks,
         activeWeekIndex,
-        selectedPeriod
+        selectedPeriod,
+        reportOptions
       };
 
       await generateCompliancePDF(dataForPDF);
@@ -410,7 +516,7 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer} showsVerticalScrollIndicator={false}>
       
-      {/* 1. ATHLETES LIST SELECTOR (Styled identical to PlanificacionTab) */}
+      {/* 1. ATHLETES LIST SELECTOR */}
       <View style={styles.selectorCard}>
         <Text style={styles.label}>SELECCIONAR ATLETA</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.athleteScroller}>
@@ -450,7 +556,7 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
         </ScrollView>
       </View>
 
-      {/* 2. PERIOD SELECTOR (1, 2, 3, 4 Semanas) */}
+      {/* 2. PERIOD SELECTOR & WEEKS CAROUSEL */}
       <View style={styles.card}>
         <Text style={styles.label}>AGRUPACIÓN TEMPORAL</Text>
         <View style={styles.periodRow}>
@@ -504,12 +610,13 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
         </View>
       </View>
 
-      {/* 4. METRIC SWITCHER TABS (Duración, Distancia, TSS/ECOs) */}
+      {/* 4. METRIC SWITCHER TABS (Distancia, Duración, TSS, ECOs) */}
       <View style={styles.metricTabsRow}>
         {[
           { id: 'distancia', label: 'Distancia', icon: 'map-outline' },
           { id: 'duracion', label: 'Duración', icon: 'time-outline' },
-          { id: 'tss', label: 'TSS / ECOs', icon: 'flash-outline' },
+          { id: 'tss', label: 'TSS', icon: 'flash-outline' },
+          { id: 'ecos', label: 'ECOs', icon: 'flame-outline' },
         ].map((m) => {
           const isSel = selectedMetric === m.id;
           return (
@@ -523,7 +630,7 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
                 name={m.icon}
                 size={14}
                 color={isSel ? '#ffffff' : theme.textSecondary}
-                style={{ marginRight: 5 }}
+                style={{ marginRight: 4 }}
               />
               <Text style={[styles.metricTabText, isSel && styles.metricTabTextActive]}>
                 {m.label}
@@ -701,17 +808,133 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
         </View>
       ) : null}
 
-      {/* 8. ACTION BUTTONS */}
-      <View style={styles.actionButtonsRow}>
-        <TouchableOpacity style={styles.btnWhatsapp} onPress={handleShareWhatsApp} activeOpacity={0.8}>
-          <Ionicons name="logo-whatsapp" size={16} color="#ffffff" style={{ marginRight: 6 }} />
-          <Text style={styles.btnTextWhite}>WhatsApp</Text>
-        </TouchableOpacity>
+      {/* 8. REPORT CUSTOMIZATION & EXPORT SECTION (Requested in Audio) */}
+      <View style={[styles.card, { borderColor: theme.primary + '50' }]}>
+        <View style={styles.reportConfigHeader}>
+          <Ionicons name="options-outline" size={18} color={theme.primary} style={{ marginRight: 6 }} />
+          <Text style={[styles.cardTitle, { color: theme.primary, marginBottom: 0 }]}>
+            PERSONALIZAR REPORTE A ENVIAR
+          </Text>
+        </View>
+        <Text style={styles.reportConfigSub}>
+          Selecciona las métricas visibles en el PDF y WhatsApp para <Text style={{ fontWeight: '800', color: theme.text }}>{selectedAthlete.nombre}</Text>:
+        </Text>
 
-        <TouchableOpacity style={styles.btnPdf} onPress={handleExportPDF} activeOpacity={0.8}>
-          <Ionicons name="document-text-outline" size={16} color="#ffffff" style={{ marginRight: 6 }} />
-          <Text style={styles.btnTextWhite}>Informe PDF</Text>
-        </TouchableOpacity>
+        {/* TOGGLES GRID */}
+        <View style={styles.togglesGrid}>
+          <TouchableOpacity
+            style={[styles.togglePill, reportOptions.distance && styles.togglePillActive]}
+            onPress={() => toggleReportOption('distance')}
+            activeOpacity={0.7}
+          >
+            <Ionicons
+              name={reportOptions.distance ? "checkbox" : "square-outline"}
+              size={16}
+              color={reportOptions.distance ? theme.primary : theme.textSecondary}
+              style={{ marginRight: 5 }}
+            />
+            <Text style={[styles.togglePillText, reportOptions.distance && styles.togglePillTextActive]}>
+              📏 Distancia
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.togglePill, reportOptions.duration && styles.togglePillActive]}
+            onPress={() => toggleReportOption('duration')}
+            activeOpacity={0.7}
+          >
+            <Ionicons
+              name={reportOptions.duration ? "checkbox" : "square-outline"}
+              size={16}
+              color={reportOptions.duration ? theme.primary : theme.textSecondary}
+              style={{ marginRight: 5 }}
+            />
+            <Text style={[styles.togglePillText, reportOptions.duration && styles.togglePillTextActive]}>
+              ⏱️ Tiempo (Horas)
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.togglePill, reportOptions.tss && styles.togglePillActive]}
+            onPress={() => toggleReportOption('tss')}
+            activeOpacity={0.7}
+          >
+            <Ionicons
+              name={reportOptions.tss ? "checkbox" : "square-outline"}
+              size={16}
+              color={reportOptions.tss ? theme.primary : theme.textSecondary}
+              style={{ marginRight: 5 }}
+            />
+            <Text style={[styles.togglePillText, reportOptions.tss && styles.togglePillTextActive]}>
+              ⚡ TSS (Stress)
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.togglePill, reportOptions.ecos && styles.togglePillActive]}
+            onPress={() => toggleReportOption('ecos')}
+            activeOpacity={0.7}
+          >
+            <Ionicons
+              name={reportOptions.ecos ? "checkbox" : "square-outline"}
+              size={16}
+              color={reportOptions.ecos ? theme.primary : theme.textSecondary}
+              style={{ marginRight: 5 }}
+            />
+            <Text style={[styles.togglePillText, reportOptions.ecos && styles.togglePillTextActive]}>
+              🔥 ECOs (Carga)
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.togglePill, reportOptions.breakdown && styles.togglePillActive]}
+            onPress={() => toggleReportOption('breakdown')}
+            activeOpacity={0.7}
+          >
+            <Ionicons
+              name={reportOptions.breakdown ? "checkbox" : "square-outline"}
+              size={16}
+              color={reportOptions.breakdown ? theme.primary : theme.textSecondary}
+              style={{ marginRight: 5 }}
+            />
+            <Text style={[styles.togglePillText, reportOptions.breakdown && styles.togglePillTextActive]}>
+              🎯 Calidad Sesiones
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.togglePill, reportOptions.notes && styles.togglePillActive]}
+            onPress={() => toggleReportOption('notes')}
+            activeOpacity={0.7}
+          >
+            <Ionicons
+              name={reportOptions.notes ? "checkbox" : "square-outline"}
+              size={16}
+              color={reportOptions.notes ? theme.primary : theme.textSecondary}
+              style={{ marginRight: 5 }}
+            />
+            <Text style={[styles.togglePillText, reportOptions.notes && styles.togglePillTextActive]}>
+              📝 Notas Coach
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        <Text style={styles.coachHintText}>
+          💡 <Text style={{ fontWeight: '700' }}>Consejo:</Text> Para atletas básicos puedes dejar solo Distancia y Horas. Para atletas avanzados, activa ECOs y TSS.
+        </Text>
+
+        {/* ACTION BUTTONS */}
+        <View style={styles.actionButtonsRow}>
+          <TouchableOpacity style={styles.btnWhatsapp} onPress={handleShareWhatsApp} activeOpacity={0.8}>
+            <Ionicons name="logo-whatsapp" size={16} color="#ffffff" style={{ marginRight: 6 }} />
+            <Text style={styles.btnTextWhite}>Enviar WhatsApp</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.btnPdf} onPress={handleExportPDF} activeOpacity={0.8}>
+            <Ionicons name="document-text-outline" size={16} color="#ffffff" style={{ marginRight: 6 }} />
+            <Text style={styles.btnTextWhite}>Informe PDF</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <TouchableOpacity style={styles.btnRegisterMain} onPress={openRegisterModal} activeOpacity={0.8}>
@@ -732,8 +955,10 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
               </TouchableOpacity>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 420 }}>
-              <Text style={styles.label}>EJECUCIÓN REAL POR DISCIPLINA</Text>
+            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 460 }}>
+              
+              {/* SECTION 1: VOLUMEN REAL */}
+              <Text style={styles.label}>1. VOLUMEN REAL POR DISCIPLINA</Text>
               
               <View style={styles.inputFieldWrap}>
                 <Text style={styles.inputLabel}>🏊 Natación Real (Metros):</Text>
@@ -771,7 +996,62 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
                 />
               </View>
 
-              <Text style={[styles.label, { marginTop: 14 }]}>SESIONES REALIZADAS POR ESTADO</Text>
+              {/* SECTION 2: TSS MANUAL INPUT (PLAN vs REAL) */}
+              <Text style={[styles.label, { marginTop: 14 }]}>2. TSS (TRAINING STRESS SCORE)</Text>
+              <View style={styles.dualInputsRow}>
+                <View style={styles.dualInputCol}>
+                  <Text style={styles.inputLabel}>⚡ TSS Planificado:</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    keyboardType="numeric"
+                    placeholder="Ej. 380"
+                    placeholderTextColor={theme.textMuted}
+                    value={planTssInput}
+                    onChangeText={setPlanTssInput}
+                  />
+                </View>
+                <View style={styles.dualInputCol}>
+                  <Text style={styles.inputLabel}>⚡ TSS Realizado:</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    keyboardType="numeric"
+                    placeholder="Ej. 350"
+                    placeholderTextColor={theme.textMuted}
+                    value={realTssInput}
+                    onChangeText={setRealTssInput}
+                  />
+                </View>
+              </View>
+
+              {/* SECTION 3: ECOS MANUAL INPUT (PLAN vs REAL) */}
+              <Text style={[styles.label, { marginTop: 14 }]}>3. ECOS (CARGA DE ENTRENAMIENTO)</Text>
+              <View style={styles.dualInputsRow}>
+                <View style={styles.dualInputCol}>
+                  <Text style={styles.inputLabel}>🔥 ECOs Planificados:</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    keyboardType="numeric"
+                    placeholder="Ej. 420"
+                    placeholderTextColor={theme.textMuted}
+                    value={planEcosInput}
+                    onChangeText={setPlanEcosInput}
+                  />
+                </View>
+                <View style={styles.dualInputCol}>
+                  <Text style={styles.inputLabel}>🔥 ECOs Realizados:</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    keyboardType="numeric"
+                    placeholder="Ej. 390"
+                    placeholderTextColor={theme.textMuted}
+                    value={realEcosInput}
+                    onChangeText={setRealEcosInput}
+                  />
+                </View>
+              </View>
+
+              {/* SECTION 4: SESSION QUALITY BREAKDOWN */}
+              <Text style={[styles.label, { marginTop: 14 }]}>4. SESIONES REALIZADAS POR ESTADO</Text>
               <View style={styles.statusGrid}>
                 <View style={styles.statusGridItem}>
                   <Text style={[styles.statusMiniLabel, { color: theme.success }]}>🟢 En objetivo:</Text>
@@ -820,7 +1100,8 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
                 </View>
               </View>
 
-              <Text style={[styles.label, { marginTop: 14 }]}>NOTAS Y FEEDBACK DEL COACH</Text>
+              {/* SECTION 5: COACH NOTES */}
+              <Text style={[styles.label, { marginTop: 14 }]}>5. NOTAS Y FEEDBACK DEL COACH</Text>
               <TextInput
                 style={[styles.textInput, { height: 75, textAlignVertical: 'top' }]}
                 multiline
@@ -898,16 +1179,16 @@ const getStyles = (theme) =>
     athleteBubble: {
       flexDirection: 'row',
       alignItems: 'center',
-      paddingVertical: 7,
-      paddingHorizontal: 14,
       backgroundColor: theme.surfaceSecondary,
-      borderRadius: 20,
       borderWidth: 1,
       borderColor: theme.border,
+      paddingVertical: 8,
+      paddingHorizontal: 14,
+      borderRadius: 12,
     },
     athleteBubbleText: {
-      fontSize: 12,
-      fontWeight: '800',
+      fontSize: 13,
+      fontWeight: '700',
     },
     card: {
       backgroundColor: theme.surface,
@@ -922,54 +1203,24 @@ const getStyles = (theme) =>
       shadowRadius: 8,
       elevation: 2,
     },
-    cardHeader: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      marginBottom: 14,
-    },
-    cardTitle: {
-      fontSize: 15,
-      fontWeight: '900',
-      color: theme.text,
-    },
-    cardSubtitle: {
-      fontSize: 12,
-      color: theme.textSecondary,
-      marginTop: 2,
-      fontWeight: '600',
-    },
-    btnActionSmall: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingVertical: 6,
-      paddingHorizontal: 12,
-      borderRadius: 12,
-      backgroundColor: theme.surfaceSecondary,
-      borderWidth: 1,
-      borderColor: theme.border,
-    },
-    btnActionSmallText: {
-      fontSize: 11,
-      fontWeight: '800',
-      color: theme.primary,
-    },
     periodRow: {
       flexDirection: 'row',
-      backgroundColor: theme.surfaceSecondary,
-      borderRadius: 12,
-      padding: 4,
-      borderWidth: 1,
-      borderColor: theme.border,
+      gap: 8,
+      marginBottom: 4,
     },
     periodBtn: {
       flex: 1,
+      backgroundColor: theme.surfaceSecondary,
+      borderWidth: 1,
+      borderColor: theme.border,
       paddingVertical: 8,
+      borderRadius: 12,
       alignItems: 'center',
-      borderRadius: 8,
+      justifyContent: 'center',
     },
     periodBtnActive: {
       backgroundColor: theme.primary,
+      borderColor: theme.primary,
     },
     periodBtnText: {
       fontSize: 12,
@@ -978,21 +1229,21 @@ const getStyles = (theme) =>
     },
     periodBtnTextActive: {
       color: '#ffffff',
-      fontWeight: '900',
     },
     weeksScroll: {
       gap: 8,
-      paddingVertical: 4,
+      paddingVertical: 2,
     },
     weekPill: {
       backgroundColor: theme.surfaceSecondary,
-      paddingHorizontal: 14,
-      paddingVertical: 8,
-      borderRadius: 14,
       borderWidth: 1,
       borderColor: theme.border,
+      paddingVertical: 8,
+      paddingHorizontal: 12,
+      borderRadius: 12,
       alignItems: 'center',
-      minWidth: 84,
+      minWidth: 88,
+      position: 'relative',
     },
     weekPillNum: {
       fontSize: 12,
@@ -1003,68 +1254,102 @@ const getStyles = (theme) =>
       fontSize: 10,
       color: theme.textSecondary,
       marginTop: 2,
-      fontWeight: '600',
     },
     hasCompDot: {
-      width: 5,
-      height: 5,
-      borderRadius: 2.5,
+      position: 'absolute',
+      top: 6,
+      right: 6,
+      width: 6,
+      height: 6,
+      borderRadius: 3,
       backgroundColor: theme.success,
-      marginTop: 4,
     },
     metricTabsRow: {
       flexDirection: 'row',
+      gap: 6,
       marginBottom: 12,
-      backgroundColor: theme.surfaceSecondary,
-      borderRadius: 14,
-      padding: 4,
-      borderWidth: 1,
-      borderColor: theme.border,
     },
     metricTab: {
       flex: 1,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
-      paddingVertical: 9,
-      borderRadius: 10,
+      backgroundColor: theme.surface,
+      borderWidth: 1,
+      borderColor: theme.border,
+      paddingVertical: 10,
+      borderRadius: 14,
     },
     metricTabActive: {
       backgroundColor: theme.primary,
+      borderColor: theme.primary,
     },
     metricTabText: {
-      fontSize: 12,
-      fontWeight: '700',
+      fontSize: 11,
+      fontWeight: '800',
       color: theme.textSecondary,
     },
     metricTabTextActive: {
       color: '#ffffff',
+    },
+    cardHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 14,
+    },
+    cardTitle: {
+      fontSize: 14,
       fontWeight: '900',
+      color: theme.text,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
+    cardSubtitle: {
+      fontSize: 11,
+      color: theme.textSecondary,
+      marginTop: 2,
+      fontWeight: '600',
+    },
+    btnActionSmall: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: theme.surfaceSecondary,
+      borderWidth: 1,
+      borderColor: theme.primary,
+      paddingVertical: 5,
+      paddingHorizontal: 10,
+      borderRadius: 10,
+    },
+    btnActionSmallText: {
+      fontSize: 11,
+      fontWeight: '800',
+      color: theme.primary,
     },
     comparisonBox: {
       flexDirection: 'row',
       alignItems: 'center',
       backgroundColor: theme.surfaceSecondary,
       borderRadius: 16,
-      padding: 12,
-      marginBottom: 14,
-      borderWidth: 1,
-      borderColor: theme.border,
+      padding: 14,
+      marginBottom: 16,
     },
     compCol: {
       flex: 1,
+      alignItems: 'center',
     },
     compColLabel: {
       fontSize: 9,
       fontWeight: '800',
       color: theme.textSecondary,
+      textTransform: 'uppercase',
       letterSpacing: 0.5,
+      marginBottom: 2,
     },
     compColVal: {
-      fontSize: 15,
+      fontSize: 16,
       fontWeight: '900',
       color: theme.text,
-      marginTop: 2,
     },
     compDivider: {
       width: 1,
@@ -1073,59 +1358,60 @@ const getStyles = (theme) =>
       marginHorizontal: 8,
     },
     complianceBadge: {
-      paddingHorizontal: 10,
       paddingVertical: 6,
+      paddingHorizontal: 12,
       borderRadius: 12,
       borderWidth: 1,
       alignItems: 'center',
-      minWidth: 64,
+      justifyContent: 'center',
+      minWidth: 72,
     },
     complianceBadgePct: {
-      fontSize: 15,
+      fontSize: 16,
       fontWeight: '900',
+      lineHeight: 18,
     },
     complianceBadgeLabel: {
       fontSize: 9,
       fontWeight: '800',
-      marginTop: 1,
+      textTransform: 'uppercase',
+      letterSpacing: 0.4,
     },
     dailyChartContainer: {
-      marginBottom: 14,
+      marginBottom: 16,
     },
     dailyBarsRow: {
       flexDirection: 'row',
       justifyContent: 'space-between',
-      height: 75,
       alignItems: 'flex-end',
-      backgroundColor: theme.surfaceSecondary,
-      padding: 10,
-      borderRadius: 14,
-      borderWidth: 1,
-      borderColor: theme.border,
+      height: 70,
+      paddingTop: 8,
     },
     dayCol: {
-      alignItems: 'center',
       flex: 1,
+      alignItems: 'center',
     },
     barBackground: {
-      width: 12,
-      height: 46,
-      backgroundColor: theme.border,
-      borderRadius: 6,
+      width: 14,
+      height: 50,
+      backgroundColor: theme.surfaceSecondary,
+      borderRadius: 7,
       justifyContent: 'flex-end',
       overflow: 'hidden',
     },
     barFill: {
       width: '100%',
-      borderRadius: 6,
+      borderRadius: 7,
     },
     dayLetterText: {
-      fontSize: 11,
+      fontSize: 10,
       fontWeight: '800',
       color: theme.textSecondary,
       marginTop: 4,
     },
-    breakdownSection: {},
+    breakdownSection: {
+      marginTop: 2,
+    },
     breakdownList: {
       gap: 6,
     },
@@ -1133,24 +1419,27 @@ const getStyles = (theme) =>
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      paddingVertical: 4,
+      backgroundColor: theme.surfaceSecondary,
+      paddingVertical: 7,
+      paddingHorizontal: 10,
+      borderRadius: 10,
     },
     colorDot: {
-      width: 9,
-      height: 9,
-      borderRadius: 4.5,
+      width: 8,
+      height: 8,
+      borderRadius: 4,
       marginRight: 8,
     },
     breakdownName: {
-      fontSize: 12,
-      color: theme.text,
-      fontWeight: '700',
       flex: 1,
+      fontSize: 12,
+      fontWeight: '600',
+      color: theme.text,
     },
     countBadge: {
+      paddingVertical: 2,
       paddingHorizontal: 8,
-      paddingVertical: 3,
-      borderRadius: 8,
+      borderRadius: 6,
     },
     countBadgeText: {
       fontSize: 11,
@@ -1176,43 +1465,87 @@ const getStyles = (theme) =>
       color: theme.text,
     },
     disciplineValues: {
-      fontSize: 11,
+      fontSize: 12,
       fontWeight: '700',
       color: theme.textSecondary,
     },
     disciplineTrack: {
       height: 7,
       backgroundColor: theme.surfaceSecondary,
-      borderRadius: 3.5,
+      borderRadius: 4,
       overflow: 'hidden',
-      borderWidth: 1,
-      borderColor: theme.border,
     },
     disciplineBar: {
       height: '100%',
-      borderRadius: 3.5,
+      borderRadius: 4,
     },
     notesHeader: {
       flexDirection: 'row',
       alignItems: 'center',
-      marginBottom: 6,
       gap: 6,
+      marginBottom: 8,
     },
     notesTitle: {
-      fontSize: 13,
+      fontSize: 12,
       fontWeight: '800',
       color: theme.text,
+      textTransform: 'uppercase',
     },
     notesContent: {
       fontSize: 12,
       color: theme.textSecondary,
       lineHeight: 18,
-      fontWeight: '600',
+    },
+    reportConfigHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: 4,
+    },
+    reportConfigSub: {
+      fontSize: 12,
+      color: theme.textSecondary,
+      marginBottom: 12,
+      lineHeight: 16,
+    },
+    togglesGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginBottom: 12,
+    },
+    togglePill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: theme.surfaceSecondary,
+      borderWidth: 1,
+      borderColor: theme.border,
+      paddingVertical: 8,
+      paddingHorizontal: 12,
+      borderRadius: 12,
+    },
+    togglePillActive: {
+      backgroundColor: theme.primary + '18',
+      borderColor: theme.primary,
+    },
+    togglePillText: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: theme.textSecondary,
+    },
+    togglePillTextActive: {
+      color: theme.primary,
+      fontWeight: '800',
+    },
+    coachHintText: {
+      fontSize: 11,
+      color: theme.textMuted,
+      lineHeight: 16,
+      marginBottom: 14,
+      fontStyle: 'italic',
     },
     actionButtonsRow: {
       flexDirection: 'row',
       gap: 10,
-      marginBottom: 10,
     },
     btnWhatsapp: {
       flex: 1,
@@ -1222,10 +1555,6 @@ const getStyles = (theme) =>
       backgroundColor: '#25D366',
       paddingVertical: 12,
       borderRadius: 14,
-      shadowColor: '#25D366',
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.2,
-      shadowRadius: 4,
       elevation: 2,
     },
     btnPdf: {
@@ -1236,62 +1565,61 @@ const getStyles = (theme) =>
       backgroundColor: theme.primary,
       paddingVertical: 12,
       borderRadius: 14,
-      shadowColor: theme.primary,
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.2,
-      shadowRadius: 4,
       elevation: 2,
     },
     btnTextWhite: {
       fontSize: 13,
-      fontWeight: '800',
+      fontWeight: '900',
       color: '#ffffff',
     },
     btnRegisterMain: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: theme.primary,
-      paddingVertical: 13,
-      borderRadius: 14,
-      shadowColor: theme.primary,
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.25,
-      shadowRadius: 6,
-      elevation: 3,
+      backgroundColor: theme.surfaceSecondary,
+      borderWidth: 1.5,
+      borderColor: theme.primary,
+      paddingVertical: 14,
+      borderRadius: 16,
+      marginTop: 4,
     },
     btnTextMain: {
-      fontSize: 14,
+      fontSize: 13,
       fontWeight: '900',
-      color: '#ffffff',
+      color: theme.primary,
     },
     modalOverlay: {
       flex: 1,
-      backgroundColor: 'rgba(0,0,0,0.65)',
+      backgroundColor: 'rgba(0, 0, 0, 0.6)',
       justifyContent: 'center',
+      alignItems: 'center',
       padding: 16,
     },
     modalContent: {
       backgroundColor: theme.surface,
-      borderRadius: 24,
+      borderRadius: 22,
       padding: 18,
+      width: '100%',
+      maxWidth: 440,
       borderWidth: 1,
       borderColor: theme.border,
-      maxHeight: '90%',
-      shadowColor: theme.shadowColor,
-      shadowOffset: { width: 0, height: 10 },
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 8 },
       shadowOpacity: 0.3,
-      shadowRadius: 16,
-      elevation: 5,
+      shadowRadius: 14,
+      elevation: 6,
     },
     modalHeader: {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
       marginBottom: 14,
+      paddingBottom: 10,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
     },
     modalTitle: {
-      fontSize: 16,
+      fontSize: 15,
       fontWeight: '900',
       color: theme.text,
     },
@@ -1300,57 +1628,64 @@ const getStyles = (theme) =>
     },
     inputLabel: {
       fontSize: 11,
-      fontWeight: '700',
+      fontWeight: '800',
       color: theme.textSecondary,
       marginBottom: 4,
     },
     textInput: {
-      backgroundColor: theme.background,
-      borderRadius: 12,
+      backgroundColor: theme.surfaceSecondary,
       borderWidth: 1,
       borderColor: theme.border,
+      borderRadius: 12,
       paddingHorizontal: 12,
       paddingVertical: 9,
       fontSize: 13,
       color: theme.text,
       fontWeight: '600',
     },
+    dualInputsRow: {
+      flexDirection: 'row',
+      gap: 10,
+      marginBottom: 10,
+    },
+    dualInputCol: {
+      flex: 1,
+    },
     statusGrid: {
       flexDirection: 'row',
       flexWrap: 'wrap',
       gap: 8,
-      marginBottom: 8,
+      marginBottom: 10,
     },
     statusGridItem: {
       width: '48%',
       backgroundColor: theme.surfaceSecondary,
-      borderRadius: 12,
-      padding: 8,
       borderWidth: 1,
       borderColor: theme.border,
+      borderRadius: 10,
+      padding: 8,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
     },
     statusMiniLabel: {
-      fontSize: 11,
+      fontSize: 10,
       fontWeight: '800',
     },
     miniInput: {
-      width: 36,
       backgroundColor: theme.surface,
-      borderRadius: 8,
       borderWidth: 1,
       borderColor: theme.border,
+      borderRadius: 6,
+      width: 40,
       textAlign: 'center',
-      fontSize: 13,
+      paddingVertical: 2,
+      fontSize: 12,
       fontWeight: '800',
       color: theme.text,
-      paddingVertical: 2,
     },
     modalActionsRow: {
       flexDirection: 'row',
-      justifyContent: 'flex-end',
       gap: 10,
       marginTop: 16,
       paddingTop: 12,
@@ -1358,29 +1693,32 @@ const getStyles = (theme) =>
       borderTopColor: theme.border,
     },
     btnCancel: {
-      paddingVertical: 10,
-      paddingHorizontal: 16,
+      flex: 1,
+      paddingVertical: 11,
       borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
       backgroundColor: theme.surfaceSecondary,
       borderWidth: 1,
       borderColor: theme.border,
     },
     btnCancelText: {
       fontSize: 13,
-      fontWeight: '700',
+      fontWeight: '800',
       color: theme.textSecondary,
     },
     btnSave: {
+      flex: 1.4,
       flexDirection: 'row',
       alignItems: 'center',
-      paddingVertical: 10,
-      paddingHorizontal: 18,
-      borderRadius: 12,
+      justifyContent: 'center',
       backgroundColor: theme.primary,
+      paddingVertical: 11,
+      borderRadius: 12,
     },
     btnSaveText: {
       fontSize: 13,
-      fontWeight: '800',
+      fontWeight: '900',
       color: '#ffffff',
-    }
+    },
   });

@@ -20,6 +20,8 @@ export async function generateCompliancePDF(data) {
     completedKm = '0.0',
     plannedDuration = '0h',
     completedDuration = '0h',
+    plannedTss = 0,
+    completedTss = 0,
     plannedEcos = 0,
     completedEcos = 0,
     natPlanned = '0.0 km',
@@ -36,7 +38,15 @@ export async function generateCompliancePDF(data) {
     calculatedWeeks = [],
     complianceWeeks = {},
     activeWeekIndex = 0,
-    selectedPeriod = 1
+    selectedPeriod = 1,
+    reportOptions = {
+      distance: true,
+      duration: true,
+      tss: false,
+      ecos: false,
+      breakdown: true,
+      notes: true
+    }
   } = data;
 
   const todayStr = new Date().toLocaleDateString('es-CL', {
@@ -64,20 +74,77 @@ export async function generateCompliancePDF(data) {
     badgeText = '#ea580c';
   }
 
+  // Dynamic KPI cards
+  let kpiCardsHtml = '';
+  if (reportOptions.distance) {
+    kpiCardsHtml += `
+      <div class="kpi-card">
+        <div class="kpi-label">Distancia Total</div>
+        <div class="kpi-main-val">${completedKm} km</div>
+        <div class="kpi-sub-val">Plan: ${plannedKm} km</div>
+      </div>
+    `;
+  }
+  if (reportOptions.duration) {
+    kpiCardsHtml += `
+      <div class="kpi-card">
+        <div class="kpi-label">Tiempo Total</div>
+        <div class="kpi-main-val">${completedDuration}</div>
+        <div class="kpi-sub-val">Plan: ${plannedDuration}</div>
+      </div>
+    `;
+  }
+  if (reportOptions.tss) {
+    kpiCardsHtml += `
+      <div class="kpi-card">
+        <div class="kpi-label">TSS (Stress)</div>
+        <div class="kpi-main-val">${completedTss} TSS</div>
+        <div class="kpi-sub-val">Plan: ${plannedTss} TSS</div>
+      </div>
+    `;
+  }
+  if (reportOptions.ecos) {
+    kpiCardsHtml += `
+      <div class="kpi-card">
+        <div class="kpi-label">Carga ECOs</div>
+        <div class="kpi-main-val">${completedEcos} ECOs</div>
+        <div class="kpi-sub-val">Plan: ${plannedEcos} ECOs</div>
+      </div>
+    `;
+  }
+
   // Generate multi-week breakdown rows if period > 1
   let multiWeekHtml = '';
   if (selectedPeriod > 1 && calculatedWeeks && calculatedWeeks.length > 0) {
     const startIdx = Math.max(0, activeWeekIndex - selectedPeriod + 1);
     const endIdx = activeWeekIndex;
 
+    let headersHtml = '<th>Microciclo</th>';
+    if (reportOptions.distance) {
+      headersHtml += '<th>Dist. Plan</th><th>Dist. Real</th>';
+    }
+    if (reportOptions.duration) {
+      headersHtml += '<th>Tiempo Plan</th><th>Tiempo Real</th>';
+    }
+    if (reportOptions.tss) {
+      headersHtml += '<th>TSS Plan</th><th>TSS Real</th>';
+    }
+    if (reportOptions.ecos) {
+      headersHtml += '<th>ECOs Plan</th><th>ECOs Real</th>';
+    }
+    headersHtml += '<th style="text-align:right;">Cumplimiento</th>';
+
     let rowsHtml = '';
     for (let w = startIdx; w <= endIdx; w++) {
-      const wPlan = calculatedWeeks[w]?.planned || { totalKm: 0, totalMin: 0, totalEcos: 0 };
+      const wPlan = calculatedWeeks[w]?.planned || { totalKm: 0, totalMin: 0, totalEcos: 0, totalTss: 350 };
       const wComp = complianceWeeks[w] || null;
 
       let cKm = (wPlan.totalKm * 0.84);
       let cMin = (wPlan.totalMin * 0.84);
+      let pEcos = wPlan.totalEcos || 0;
       let cEcos = (wPlan.totalEcos * 0.84);
+      let pTss = 350;
+      let cTss = 300;
 
       if (wComp) {
         const cNatM = parseFloat(wComp.natM) || 0;
@@ -85,25 +152,45 @@ export async function generateCompliancePDF(data) {
         const cCarMin = (parseFloat(wComp.carHours) || 0) * 60;
         cKm = (cNatM / 1000) + (cCicMin / 60 * 28) + (cCarMin / 60 * 12);
         cMin = (cNatM / 100 * 2) + cCicMin + cCarMin;
-        cEcos = (cNatM / 100 * 2 * 0.75 * 2) + (cCicMin * 0.5 * 2) + (cCarMin * 1.0 * 2);
+        
+        pEcos = wComp.planEcos !== undefined && wComp.planEcos !== '' ? parseFloat(wComp.planEcos) : wPlan.totalEcos;
+        cEcos = wComp.realEcos !== undefined && wComp.realEcos !== '' ? parseFloat(wComp.realEcos) : ((cNatM / 100 * 2 * 0.75 * 2) + (cCicMin * 0.5 * 2) + (cCarMin * 1.0 * 2));
+
+        pTss = wComp.planTss !== undefined && wComp.planTss !== '' ? parseFloat(wComp.planTss) : 350;
+        cTss = wComp.realTss !== undefined && wComp.realTss !== '' ? parseFloat(wComp.realTss) : Math.round(cMin * 0.6);
       }
 
-      const weekPct = wPlan.totalKm > 0 ? Math.round((cKm / wPlan.totalKm) * 100) : 0;
+      let comparisonPlan = wPlan.totalKm;
+      let comparisonReal = cKm;
+      if (!reportOptions.distance && reportOptions.duration) {
+        comparisonPlan = wPlan.totalMin;
+        comparisonReal = cMin;
+      }
+
+      const weekPct = comparisonPlan > 0 ? Math.round((comparisonReal / comparisonPlan) * 100) : 0;
       let wBadgeColor = '#059669';
       if (weekPct < 55) wBadgeColor = '#dc2626';
       else if (weekPct < 80) wBadgeColor = '#ca8a04';
       else if (weekPct > 120) wBadgeColor = '#ea580c';
 
-      rowsHtml += `
-        <tr>
-          <td style="font-weight:700;">Semana ${w + 1} (${calculatedWeeks[w]?.fechaInicio || ''})</td>
-          <td>${wPlan.totalKm.toFixed(1)} km</td>
-          <td style="font-weight:700;">${cKm.toFixed(1)} km</td>
-          <td>${Math.round(wPlan.totalEcos)}</td>
-          <td>${Math.round(cEcos)}</td>
-          <td style="font-weight:800; color:${wBadgeColor}; text-align:right;">${weekPct}%</td>
-        </tr>
-      `;
+      let rowCols = `<td style="font-weight:700;">Semana ${w + 1} (${calculatedWeeks[w]?.fechaInicio || ''})</td>`;
+      if (reportOptions.distance) {
+        rowCols += `<td>${wPlan.totalKm.toFixed(1)} km</td><td style="font-weight:700;">${cKm.toFixed(1)} km</td>`;
+      }
+      if (reportOptions.duration) {
+        const pHours = Math.floor(wPlan.totalMin / 60) + 'h ' + Math.round(wPlan.totalMin % 60) + 'm';
+        const cHours = Math.floor(cMin / 60) + 'h ' + Math.round(cMin % 60) + 'm';
+        rowCols += `<td>${pHours}</td><td style="font-weight:700;">${cHours}</td>`;
+      }
+      if (reportOptions.tss) {
+        rowCols += `<td>${Math.round(pTss)}</td><td style="font-weight:700;">${Math.round(cTss)}</td>`;
+      }
+      if (reportOptions.ecos) {
+        rowCols += `<td>${Math.round(pEcos)}</td><td style="font-weight:700;">${Math.round(cEcos)}</td>`;
+      }
+      rowCols += `<td style="font-weight:800; color:${wBadgeColor}; text-align:right;">${weekPct}%</td>`;
+
+      rowsHtml += `<tr>${rowCols}</tr>`;
     }
 
     multiWeekHtml = `
@@ -111,18 +198,55 @@ export async function generateCompliancePDF(data) {
       <table class="data-table">
         <thead>
           <tr>
-            <th>Microciclo</th>
-            <th>Dist. Plan</th>
-            <th>Dist. Real</th>
-            <th>ECOs Plan</th>
-            <th>ECOs Real</th>
-            <th style="text-align:right;">Cumplimiento</th>
+            ${headersHtml}
           </tr>
         </thead>
         <tbody>
           ${rowsHtml}
         </tbody>
       </table>
+    `;
+  }
+
+  // Session Adherence HTML
+  let breakdownHtml = '';
+  if (reportOptions.breakdown) {
+    breakdownHtml = `
+      <div class="section-title">Calidad y Adherencia de las Sesiones</div>
+      <div class="breakdown-row">
+        <div class="breakdown-pill" style="border-color: #a7f3d0; background: #ecfdf5;">
+          <div class="breakdown-pill-count" style="color: #059669;">${breakdown.green || 0}</div>
+          <div class="breakdown-pill-label" style="color: #059669;">En Objetivo</div>
+        </div>
+        <div class="breakdown-pill" style="border-color: #fef08a; background: #fefce8;">
+          <div class="breakdown-pill-count" style="color: #ca8a04;">${breakdown.yellow || 0}</div>
+          <div class="breakdown-pill-label" style="color: #ca8a04;">Desviación &gt;20%</div>
+        </div>
+        <div class="breakdown-pill" style="border-color: #fed7aa; background: #fff7ed;">
+          <div class="breakdown-pill-count" style="color: #ea580c;">${breakdown.orange || 0}</div>
+          <div class="breakdown-pill-label" style="color: #ea580c;">Incompletos</div>
+        </div>
+        <div class="breakdown-pill" style="border-color: #fecaca; background: #fef2f2;">
+          <div class="breakdown-pill-count" style="color: #dc2626;">${breakdown.red || 0}</div>
+          <div class="breakdown-pill-label" style="color: #dc2626;">Sin Registro</div>
+        </div>
+        <div class="breakdown-pill" style="border-color: #e2e8f0; background: #f8fafc;">
+          <div class="breakdown-pill-count" style="color: #64748b;">${breakdown.extra || 0}</div>
+          <div class="breakdown-pill-label" style="color: #64748b;">Ejercicios Extra</div>
+        </div>
+      </div>
+    `;
+  }
+
+  // Coach Notes HTML
+  let coachNotesHtml = '';
+  if (reportOptions.notes && coachNotes) {
+    coachNotesHtml = `
+      <div class="section-title">Observaciones Técnicas del Entrenador</div>
+      <div class="notes-box">
+        <div class="notes-header">📝 Feedback de Rendimiento y Ajustes</div>
+        <div class="notes-body">${coachNotes.replace(/\n/g, '<br/>')}</div>
+      </div>
     `;
   }
 
@@ -240,7 +364,7 @@ export async function generateCompliancePDF(data) {
       margin-bottom: 4px;
     }
     .kpi-main-val {
-      font-size: 18px;
+      font-size: 17px;
       font-weight: 900;
       color: #0f172a;
     }
@@ -436,21 +560,7 @@ export async function generateCompliancePDF(data) {
 
   <!-- SUMMARY KPIS -->
   <div class="kpi-container">
-    <div class="kpi-card">
-      <div class="kpi-label">Distancia Total</div>
-      <div class="kpi-main-val">${completedKm} km</div>
-      <div class="kpi-sub-val">Plan: ${plannedKm} km</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-label">Tiempo Total</div>
-      <div class="kpi-main-val">${completedDuration}</div>
-      <div class="kpi-sub-val">Plan: ${plannedDuration}</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-label">Carga de Trabajo</div>
-      <div class="kpi-main-val">${completedEcos} ECOs</div>
-      <div class="kpi-sub-val">Plan: ${plannedEcos} ECOs</div>
-    </div>
+    ${kpiCardsHtml}
     <div class="kpi-score-card">
       <div class="kpi-score-pct">${currentPct}%</div>
       <div class="kpi-score-label">${statusLabel}</div>
@@ -507,40 +617,12 @@ export async function generateCompliancePDF(data) {
   </table>
 
   <!-- SESSION ADHERENCE / BREAKDOWN (TrainingPeaks) -->
-  <div class="section-title">Calidad y Adherencia de las Sesiones</div>
-  <div class="breakdown-row">
-    <div class="breakdown-pill" style="border-color: #a7f3d0; background: #ecfdf5;">
-      <div class="breakdown-pill-count" style="color: #059669;">${breakdown.green || 0}</div>
-      <div class="breakdown-pill-label" style="color: #059669;">En Objetivo</div>
-    </div>
-    <div class="breakdown-pill" style="border-color: #fef08a; background: #fefce8;">
-      <div class="breakdown-pill-count" style="color: #ca8a04;">${breakdown.yellow || 0}</div>
-      <div class="breakdown-pill-label" style="color: #ca8a04;">Desviación &gt;20%</div>
-    </div>
-    <div class="breakdown-pill" style="border-color: #fed7aa; background: #fff7ed;">
-      <div class="breakdown-pill-count" style="color: #ea580c;">${breakdown.orange || 0}</div>
-      <div class="breakdown-pill-label" style="color: #ea580c;">Incompletos</div>
-    </div>
-    <div class="breakdown-pill" style="border-color: #fecaca; background: #fef2f2;">
-      <div class="breakdown-pill-count" style="color: #dc2626;">${breakdown.red || 0}</div>
-      <div class="breakdown-pill-label" style="color: #dc2626;">Sin Registro</div>
-    </div>
-    <div class="breakdown-pill" style="border-color: #e2e8f0; background: #f8fafc;">
-      <div class="breakdown-pill-count" style="color: #64748b;">${breakdown.extra || 0}</div>
-      <div class="breakdown-pill-label" style="color: #64748b;">Ejercicios Extra</div>
-    </div>
-  </div>
+  ${breakdownHtml}
 
   ${multiWeekHtml}
 
   <!-- COACH OBSERVATIONS -->
-  ${coachNotes ? `
-    <div class="section-title">Observaciones Técnicas del Entrenador</div>
-    <div class="notes-box">
-      <div class="notes-header">📝 Feedback de Rendimiento y Ajustes</div>
-      <div class="notes-body">${coachNotes.replace(/\n/g, '<br/>')}</div>
-    </div>
-  ` : ''}
+  ${coachNotesHtml}
 
   <!-- SIGNATURES -->
   <div class="signatures-row">
