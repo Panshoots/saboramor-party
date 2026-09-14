@@ -236,6 +236,77 @@ function AppContent() {
     deleteAtletaFromCloud(id).catch(console.log);
   };
 
+  const handleAddAbono = (athleteId, abonoData) => {
+    const updatedList = atletas.map(a => {
+      if (a.id === athleteId) {
+        const abonos = a.abonos || [];
+        const newAbono = {
+          id: Date.now(),
+          fecha: abonoData.fecha || new Date().toISOString().split('T')[0],
+          monto: parseFloat(abonoData.monto) || 0,
+          metodo: abonoData.metodo || 'Transferencia',
+          banco: abonoData.banco || 'BancoEstado',
+          notas: abonoData.notas || ''
+        };
+        const updatedAbonos = [newAbono, ...abonos];
+        const totalAbonado = updatedAbonos.reduce((sum, ab) => sum + (ab.monto || 0), 0);
+        const totalMonto = a.monto || 40000;
+        const saldoRestante = Math.max(0, totalMonto - totalAbonado);
+        const isFullyPaid = totalAbonado >= totalMonto;
+
+        const feeFormatted = Math.round(newAbono.monto).toLocaleString('es-CL');
+        const totalFormatted = Math.round(totalAbonado).toLocaleString('es-CL');
+        const maxFormatted = Math.round(totalMonto).toLocaleString('es-CL');
+        const saldoFormatted = Math.round(saldoRestante).toLocaleString('es-CL');
+
+        const nuevoLog = {
+          id: Date.now() + 1,
+          fecha: new Date().toISOString().split('T')[0],
+          tipo: 'Abono',
+          descripcion: `Abono de $${feeFormatted} recibido (${newAbono.metodo} - ${newAbono.banco}). Total pagado: $${totalFormatted} / $${maxFormatted}. Saldo pendiente: $${saldoFormatted}.${newAbono.notas ? ' Nota: ' + newAbono.notas : ''}`
+        };
+
+        return {
+          ...a,
+          abonos: updatedAbonos,
+          pagado: isFullyPaid,
+          estado: isFullyPaid ? 'Al Día' : (totalAbonado > 0 ? 'Abonado Parcial' : 'Deuda'),
+          historial: [nuevoLog, ...(a.historial || [])]
+        };
+      }
+      return a;
+    });
+    saveAtletas(updatedList);
+  };
+
+  const handleDeleteAbono = (athleteId, abonoId) => {
+    const updatedList = atletas.map(a => {
+      if (a.id === athleteId) {
+        const abonos = (a.abonos || []).filter(ab => ab.id !== abonoId);
+        const totalAbonado = abonos.reduce((sum, ab) => sum + (ab.monto || 0), 0);
+        const totalMonto = a.monto || 40000;
+        const isFullyPaid = totalAbonado >= totalMonto;
+
+        const nuevoLog = {
+          id: Date.now(),
+          fecha: new Date().toISOString().split('T')[0],
+          tipo: 'Abono Revertido',
+          descripcion: `Se eliminó un registro de abono. Total pagado actual: $${Math.round(totalAbonado).toLocaleString('es-CL')}`
+        };
+
+        return {
+          ...a,
+          abonos,
+          pagado: isFullyPaid,
+          estado: isFullyPaid ? 'Al Día' : (totalAbonado > 0 ? 'Abonado Parcial' : 'Deuda'),
+          historial: [nuevoLog, ...(a.historial || [])]
+        };
+      }
+      return a;
+    });
+    saveAtletas(updatedList);
+  };
+
   const handleTogglePago = (id) => {
     const updatedList = atletas.map(a => {
       if (a.id === id) {
@@ -475,6 +546,8 @@ function AppContent() {
             onSaveAtleta={handleSaveAtleta}
             onDeleteAtleta={handleDeleteAtleta}
             onTogglePago={handleTogglePago}
+            onAddAbono={handleAddAbono}
+            onDeleteAbono={handleDeleteAbono}
             onAddHistoryEntry={handleAddHistoryEntry}
             onDeleteHistoryEntry={handleDeleteHistoryEntry}
           />
