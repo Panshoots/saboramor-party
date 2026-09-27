@@ -9,9 +9,7 @@ import {
   Alert,
   Platform,
   Keyboard,
-  Clipboard,
-  Share,
-  Linking
+  Modal
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Print from 'expo-print';
@@ -20,24 +18,67 @@ import { useTheme } from '../theme/ThemeContext';
 
 const DAYS = ['Lunes', 'Martes', 'Miercoles', 'Jueves', 'Viernes', 'Sabado', 'Domingo'];
 
-const COEF = {
-  1: 1,
-  2: 2,
-  3: 3,
-  4: 4,
-  5: 6,
-  6: 9,
-  7: 15,
-  8: 50
+const ZONES_INFO = [
+  { id: 1, name: 'Z1', label: 'Recuperación / Aeróbico Ligero', coef: 1, color: '#38bdf8' },
+  { id: 2, name: 'Z2', label: 'Aeróbico Medio / Extensivo', coef: 2, color: '#4ade80' },
+  { id: 3, name: 'Z3', label: 'Aeróbico Intensivo / Tempo', coef: 3, color: '#a3e635' },
+  { id: 4, name: 'Z4', label: 'Umbral Anaeróbico / FTP', coef: 4, color: '#facc15' },
+  { id: 5, name: 'Z5', label: 'VO2 Máx / Consumo Máx O2', coef: 6, color: '#fb923c' },
+  { id: 6, name: 'Z6', label: 'Capacidad Anaeróbica Láctica', coef: 9, color: '#f87171' },
+  { id: 7, name: 'Z7', label: 'Potencia Anaeróbica Láctica', coef: 15, color: '#e11d48' },
+  { id: 8, name: 'Z8', label: 'Potencia Aláctica / Sprint', coef: 50, color: '#a855f7' },
+];
+
+const SPORT_FACTORS = {
+  natacion: 0.75,
+  ciclismo: 0.50,
+  carrera: 1.00
 };
+
+const STRENGTH_CATEGORIES = {
+  levantamientos: [
+    { id: 1, name: '1 · Monoarticular', factor: 0.08, desc: 'Ej: Curl bíceps, Tríceps polea, Extensiones' },
+    { id: 2, name: '2 · Multiarticular auxiliar', factor: 0.24, desc: 'Ej: Remo mancuerna, Press militar máq.' },
+    { id: 3, name: '3 · Multiarticular', factor: 0.84, desc: 'Ej: Sentadilla, Peso Muerto, Press Banca' },
+    { id: 4, name: '4 · Potencia', factor: 1.12, desc: 'Ej: Cargadas, Arrancadas, Push Press' },
+    { id: 5, name: '5 · Máxima Potencia', factor: 1.50, desc: 'Ej: Levantamiento olímpico máximo' },
+  ],
+  saltos: [
+    { id: 1, name: '1 · Monoarticular', factor: 0.08, desc: 'Ej: Tobillos reactivos, Gemelos elásticos' },
+    { id: 2, name: '2 · Multiarticular auxiliar', factor: 0.40, desc: 'Ej: Saltos suaves, Lanzamiento balón liviano' },
+    { id: 3, name: '3 · Multiarticular', factor: 0.84, desc: 'Ej: Salto al cajón, Saltos en largo' },
+    { id: 4, name: '4 · Potencia', factor: 1.36, desc: 'Ej: Saltos con caída (Drop jump), Balón pesado' },
+    { id: 5, name: '5 · Máxima Potencia', factor: 1.90, desc: 'Ej: Pliometría de alto impacto / rebote máximo' },
+  ]
+};
+
+const createInitialDaySportState = () => ({
+  zones: {
+    1: { min: '', seg: '' },
+    2: { min: '', seg: '' },
+    3: { min: '', seg: '' },
+    4: { min: '', seg: '' },
+    5: { min: '', seg: '' },
+    6: { min: '', seg: '' },
+    7: { min: '', seg: '' },
+    8: { min: '', seg: '' },
+  },
+  totalMin: 0,
+  ecos: 0
+});
 
 const createInitialEcosState = () => {
   const state = {};
   DAYS.forEach(d => {
     state[d] = {
-      natacion: { reps: '1', minutos: '', segundos: '', zona: '2', distancia: '', ritmo100: '', total: 0, ecos: 0 },
-      ciclismo: { reps: '1', minutos: '', segundos: '', zona: '2', distancia: '', ritmo100: '', total: 0, ecos: 0 },
-      carrera: { reps: '1', minutos: '', segundos: '', zona: '2', distancia: '', ritmo100: '', total: 0, ecos: 0 }
+      natacion: createInitialDaySportState(),
+      ciclismo: createInitialDaySportState(),
+      carrera: createInitialDaySportState(),
+      fuerza: {
+        ejercicios: [],
+        totalReps: 0,
+        ecos: 0
+      }
     };
   });
   return state;
@@ -82,32 +123,71 @@ export default function EcosTab({ atletas, onSaveEcos }) {
   const [selectedAtletaId, setSelectedAtletaId] = useState(null);
   const [activeWeekIndex, setActiveWeekIndex] = useState(0);
   const [activeDay, setActiveDay] = useState('Lunes');
+  const [activeSportTab, setActiveSportTab] = useState('natacion'); // 'natacion' | 'ciclismo' | 'carrera' | 'fuerza'
   const [ecosState, setEcosState] = useState(createInitialEcosState());
 
   // Converter States for Natacion & Carrera
   const [convDist, setConvDist] = useState('');
   const [convRitmo, setConvRitmo] = useState('');
-  const [showConverterSport, setShowConverterSport] = useState(null); // 'natacion' or 'carrera' or null
+  const [convTargetZone, setConvTargetZone] = useState('2');
+  const [showConverterSport, setShowConverterSport] = useState(null);
 
-  // Focus state helpers
-  const [focusedInput, setFocusedInput] = useState(null); // format: 'sport-field' e.g. 'natacion-reps'
+  // Strength Exercise Add Modal / Form States
+  const [showAddStrengthModal, setShowAddStrengthModal] = useState(false);
+  const [strType, setStrType] = useState('levantamientos'); // 'levantamientos' | 'saltos'
+  const [strCategory, setStrCategory] = useState(3); // 1..5
+  const [strName, setStrName] = useState('');
+  const [strSets, setStrSets] = useState('4');
+  const [strReps, setStrReps] = useState('8');
+  const [strDirectReps, setStrDirectReps] = useState('');
 
-  const selectedAthlete = atletas.find(a => a.id === selectedAtletaId) || null;
+  const selectedAthlete = (atletas || []).find(a => a.id === selectedAtletaId) || (atletas && atletas[0]) || null;
 
+  // Load week ECOs
   const loadAthleteWeekEcos = (athlete, weekIndex) => {
     if (!athlete) return;
     const weekStartDate = getEcosWeekStartDate(athlete, weekIndex);
     
+    let loaded = null;
     if (athlete.ecosWeeks && athlete.ecosWeeks[weekStartDate]) {
-      setEcosState(athlete.ecosWeeks[weekStartDate]);
+      loaded = athlete.ecosWeeks[weekStartDate];
     } else {
-      // Check if it exists in history
       const historyItem = (athlete.ecosHistory || []).find(h => h.semanaFecha === weekStartDate);
       if (historyItem && historyItem.details) {
-        setEcosState(historyItem.details);
-      } else {
-        setEcosState(createInitialEcosState());
+        loaded = historyItem.details;
       }
+    }
+
+    if (loaded) {
+      // Normalize loaded state to ensure 8 zones and fuerza format
+      const normalized = createInitialEcosState();
+      DAYS.forEach(d => {
+        if (loaded[d]) {
+          ['natacion', 'ciclismo', 'carrera'].forEach(s => {
+            if (loaded[d][s]) {
+              if (loaded[d][s].zones) {
+                normalized[d][s] = loaded[d][s];
+              } else if (loaded[d][s].minutos !== undefined) {
+                // Legacy migration
+                const z = parseInt(loaded[d][s].zona) || 2;
+                const m = String(loaded[d][s].minutos || '');
+                const seg = String(loaded[d][s].segundos || '');
+                normalized[d][s].zones[z] = { min: m, seg: seg };
+                const calc = calculateSportEcos(s, normalized[d][s].zones);
+                normalized[d][s].totalMin = calc.totalMin;
+                normalized[d][s].ecos = calc.ecos;
+              }
+            }
+          });
+
+          if (loaded[d].fuerza) {
+            normalized[d].fuerza = loaded[d].fuerza;
+          }
+        }
+      });
+      setEcosState(normalized);
+    } else {
+      setEcosState(createInitialEcosState());
     }
   };
 
@@ -124,54 +204,59 @@ export default function EcosTab({ atletas, onSaveEcos }) {
     }
   }, [atletas, selectedAtletaId, activeWeekIndex]);
 
-  const handleSelectAthlete = (id) => {
-    setSelectedAtletaId(id);
-    setActiveWeekIndex(0);
-  };
+  // Calculation Functions
+  const calculateSportEcos = (sportKey, zonesMap) => {
+    const factor = SPORT_FACTORS[sportKey] || 1.0;
+    let totalMin = 0;
+    let totalEcos = 0;
+    
+    if (!zonesMap) return { totalMin: 0, ecos: 0 };
 
-  const calculateRowValues = (sport, repsStr, minStr, segStr, zonaStr) => {
-    const reps = parseFloat(repsStr) || 0;
-    const minutos = parseFloat(minStr) || 0;
-    const segundos = parseFloat(segStr) || 0;
-    const zona = parseInt(zonaStr) || 1;
-
-    const total = (segundos * reps / 60) + (minutos * reps);
-    const coef = COEF[zona] || 0;
-
-    let factor = 1.0;
-    if (sport === 'natacion') factor = 0.75;
-    if (sport === 'ciclismo') factor = 0.5;
-    if (sport === 'carrera') factor = 1.0;
-
-    const ecos = total * coef * factor;
+    ZONES_INFO.forEach(z => {
+      const zEntry = zonesMap[z.id] || { min: '', seg: '' };
+      const m = parseFloat(zEntry.min) || 0;
+      const s = parseFloat(zEntry.seg) || 0;
+      const timeMin = m + (s / 60);
+      totalMin += timeMin;
+      totalEcos += timeMin * z.coef * factor;
+    });
 
     return {
-      total: total,
-      ecos: ecos
+      totalMin,
+      ecos: totalEcos
     };
   };
 
-  const handleInputChange = (sport, field, value) => {
+  const calculateStrengthDayEcos = (fuerzaObj) => {
+    if (!fuerzaObj || !fuerzaObj.ejercicios) return { totalReps: 0, ecos: 0 };
+    let totalReps = 0;
+    let totalEcos = 0;
+    fuerzaObj.ejercicios.forEach(ej => {
+      totalReps += parseFloat(ej.totalReps) || 0;
+      totalEcos += parseFloat(ej.ecos) || 0;
+    });
+    return {
+      totalReps,
+      ecos: totalEcos
+    };
+  };
+
+  const handleZoneTimeChange = (sport, zoneId, field, value) => {
     setEcosState(prev => {
       const dayData = { ...prev[activeDay] };
-      const rowData = { ...dayData[sport] };
-      
-      // Update field
-      rowData[field] = value;
+      const sportData = { ...dayData[sport] };
+      const currentZones = { ...sportData.zones };
+      const zoneEntry = { ...(currentZones[zoneId] || { min: '', seg: '' }) };
 
-      // Recalculate Row values
-      const calc = calculateRowValues(
-        sport,
-        field === 'reps' ? value : rowData.reps,
-        field === 'minutos' ? value : rowData.minutos,
-        field === 'segundos' ? value : rowData.segundos,
-        field === 'zona' ? value : rowData.zona
-      );
+      zoneEntry[field] = value;
+      currentZones[zoneId] = zoneEntry;
 
-      rowData.total = calc.total;
-      rowData.ecos = calc.ecos;
+      const calc = calculateSportEcos(sport, currentZones);
+      sportData.zones = currentZones;
+      sportData.totalMin = calc.totalMin;
+      sportData.ecos = calc.ecos;
 
-      dayData[sport] = rowData;
+      dayData[sport] = sportData;
 
       return {
         ...prev,
@@ -180,48 +265,40 @@ export default function EcosTab({ atletas, onSaveEcos }) {
     });
   };
 
-  const handleConvert = (sport) => {
+  const handleConvertAndApply = (sport) => {
     const dist = parseFloat(convDist);
-    // Ritmo es en min/100m, ej: 1.75 es 1 min 45 seg, 2.0 es 2 min
     const ritmo = parseFloat(convRitmo);
 
     if (isNaN(dist) || dist <= 0) {
-      Alert.alert('Error', 'Ingresa una distancia en metros válida.');
+      Alert.alert('Error', 'Ingresa una distancia válida en metros.');
       return;
     }
     if (isNaN(ritmo) || ritmo <= 0) {
-      Alert.alert('Error', 'Ingresa un ritmo por 100m válido.');
+      Alert.alert('Error', 'Ingresa un ritmo por 100m válido (ej: 1.75).');
       return;
     }
 
-    // Convert: totalMinutos = (dist / 100) * ritmo
     const totalMinutos = (dist / 100) * ritmo;
     const minutos = Math.floor(totalMinutos);
     const segundos = Math.round((totalMinutos % 1) * 60);
+    const targetZ = parseInt(convTargetZone) || 2;
 
     setEcosState(prev => {
       const dayData = { ...prev[activeDay] };
-      const rowData = { ...dayData[sport] };
+      const sportData = { ...dayData[sport] };
+      const currentZones = { ...sportData.zones };
 
-      rowData.reps = '1';
-      rowData.minutos = minutos.toString();
-      rowData.segundos = segundos.toString();
-      rowData.distancia = convDist;
-      rowData.ritmo100 = convRitmo;
+      currentZones[targetZ] = {
+        min: minutos.toString(),
+        seg: segundos > 0 ? segundos.toString() : ''
+      };
 
-      // Recalculate row
-      const calc = calculateRowValues(
-        sport,
-        '1',
-        minutos.toString(),
-        segundos.toString(),
-        rowData.zona
-      );
+      const calc = calculateSportEcos(sport, currentZones);
+      sportData.zones = currentZones;
+      sportData.totalMin = calc.totalMin;
+      sportData.ecos = calc.ecos;
 
-      rowData.total = calc.total;
-      rowData.ecos = calc.ecos;
-
-      dayData[sport] = rowData;
+      dayData[sport] = sportData;
 
       return {
         ...prev,
@@ -229,12 +306,131 @@ export default function EcosTab({ atletas, onSaveEcos }) {
       };
     });
 
-    // Clear converter fields
     setConvDist('');
     setConvRitmo('');
     setShowConverterSport(null);
     Keyboard.dismiss();
+    Alert.alert('Calculado', `Se añadieron ${minutos}m ${segundos}s a la Zona Z${targetZ} en ${sport.toUpperCase()}.`);
   };
+
+  // Add Strength Exercise Handler
+  const handleAddStrengthExercise = () => {
+    const categoriesList = STRENGTH_CATEGORIES[strType] || STRENGTH_CATEGORIES.levantamientos;
+    const selectedCat = categoriesList.find(c => c.id === parseInt(strCategory)) || categoriesList[0];
+    const factor = selectedCat.factor;
+
+    let totalReps = 0;
+    if (strDirectReps.trim() !== '') {
+      totalReps = parseFloat(strDirectReps) || 0;
+    } else {
+      const sets = parseFloat(strSets) || 1;
+      const reps = parseFloat(strReps) || 0;
+      totalReps = sets * reps;
+    }
+
+    if (totalReps <= 0) {
+      Alert.alert('Error', 'Por favor ingresa las series y repeticiones.');
+      return;
+    }
+
+    const calculatedEcos = totalReps * factor;
+
+    const newExercise = {
+      id: Date.now(),
+      tipo: strType,
+      categoriaId: selectedCat.id,
+      categoriaNombre: selectedCat.name,
+      nombre: strName.trim() || (strType === 'levantamientos' ? 'Levantamiento' : 'Salto/Lanzamiento'),
+      series: strSets,
+      reps: strReps,
+      totalReps: totalReps,
+      factor: factor,
+      ecos: calculatedEcos
+    };
+
+    setEcosState(prev => {
+      const dayData = { ...prev[activeDay] };
+      const currentFuerza = dayData.fuerza || { ejercicios: [], totalReps: 0, ecos: 0 };
+      const updatedList = [...(currentFuerza.ejercicios || []), newExercise];
+
+      const calc = calculateStrengthDayEcos({ ejercicios: updatedList });
+
+      dayData.fuerza = {
+        ejercicios: updatedList,
+        totalReps: calc.totalReps,
+        ecos: calc.ecos
+      };
+
+      return {
+        ...prev,
+        [activeDay]: dayData
+      };
+    });
+
+    setStrName('');
+    setStrDirectReps('');
+    setShowAddStrengthModal(false);
+  };
+
+  const handleDeleteStrengthExercise = (exerciseId) => {
+    setEcosState(prev => {
+      const dayData = { ...prev[activeDay] };
+      const currentFuerza = dayData.fuerza || { ejercicios: [], totalReps: 0, ecos: 0 };
+      const updatedList = (currentFuerza.ejercicios || []).filter(e => e.id !== exerciseId);
+
+      const calc = calculateStrengthDayEcos({ ejercicios: updatedList });
+
+      dayData.fuerza = {
+        ejercicios: updatedList,
+        totalReps: calc.totalReps,
+        ecos: calc.ecos
+      };
+
+      return {
+        ...prev,
+        [activeDay]: dayData
+      };
+    });
+  };
+
+  // Day Totals & Weekly Aggregation
+  const getDaySummary = (dayName) => {
+    const d = ecosState[dayName] || {};
+    const nat = calculateSportEcos('natacion', d.natacion?.zones);
+    const cic = calculateSportEcos('ciclismo', d.ciclismo?.zones);
+    const car = calculateSportEcos('carrera', d.carrera?.zones);
+    const fue = calculateStrengthDayEcos(d.fuerza);
+
+    const totalEcos = nat.ecos + cic.ecos + car.ecos + fue.ecos;
+    return {
+      natEcos: nat.ecos,
+      cicEcos: cic.ecos,
+      carEcos: car.ecos,
+      fueEcos: fue.ecos,
+      totalEcos,
+      natMin: nat.totalMin,
+      cicMin: cic.totalMin,
+      carMin: car.totalMin,
+      fueReps: fue.totalReps
+    };
+  };
+
+  const totalsByDay = {};
+  let weeklyTotalNatEcos = 0;
+  let weeklyTotalCicEcos = 0;
+  let weeklyTotalCarEcos = 0;
+  let weeklyTotalFueEcos = 0;
+  let weeklyTotalEcos = 0;
+
+  DAYS.forEach(d => {
+    const summary = getDaySummary(d);
+    totalsByDay[d] = summary;
+    weeklyTotalNatEcos += summary.natEcos;
+    weeklyTotalCicEcos += summary.cicEcos;
+    weeklyTotalCarEcos += summary.carEcos;
+    weeklyTotalFueEcos += summary.fueEcos;
+    weeklyTotalEcos += summary.totalEcos;
+  });
 
   const handleSaveEcosWeekly = () => {
     if (!selectedAtletaId) {
@@ -242,19 +438,12 @@ export default function EcosTab({ atletas, onSaveEcos }) {
       return;
     }
 
-    // Calcular el total de ECOs de la semana
-    let totalEcos = 0;
-    DAYS.forEach(d => {
-      const dayData = ecosState[d];
-      totalEcos += (parseFloat(dayData.natacion.ecos) || 0);
-      totalEcos += (parseFloat(dayData.ciclismo.ecos) || 0);
-      totalEcos += (parseFloat(dayData.carrera.ecos) || 0);
-    });
-
     const weekStartDateStr = getEcosWeekStartDate(selectedAthlete, activeWeekIndex);
 
-    onSaveEcos(selectedAtletaId, ecosState, totalEcos, weekStartDateStr);
-    Alert.alert('Guardado', `Carga semanal guardada (${weekStartDateStr}): ${totalEcos.toFixed(2)} ECOs acumulados.`);
+    if (onSaveEcos) {
+      onSaveEcos(selectedAtletaId, ecosState, weeklyTotalEcos, weekStartDateStr);
+      Alert.alert('Guardado', `Carga semanal guardada (${weekStartDateStr}): ${weeklyTotalEcos.toFixed(1)} ECOs acumulados (Nat: ${weeklyTotalNatEcos.toFixed(1)}, Cic: ${weeklyTotalCicEcos.toFixed(1)}, Car: ${weeklyTotalCarEcos.toFixed(1)}, Fue: ${weeklyTotalFueEcos.toFixed(1)}).`);
+    }
   };
 
   const handleShareCurrentWeekPDF = async () => {
@@ -268,27 +457,23 @@ export default function EcosTab({ atletas, onSaveEcos }) {
     let dailyRowsHtml = '';
     DAYS.forEach(d => {
       const info = totalsByDay[d];
-      const rawNat = ecosState[d].natacion;
-      const rawCic = ecosState[d].ciclismo;
-      const rawCar = ecosState[d].carrera;
-      
       dailyRowsHtml += `
         <tr>
-          <td style="padding: 10px; border-bottom: 1px solid #e2e8f0; font-weight: 700; color: #1e293b;">${d}</td>
-          <td style="padding: 10px; border-bottom: 1px solid #e2e8f0; color: #0369a1;">
-            ${rawNat.minutos ? `${rawNat.minutos} min` : '-'} 
-            ${parseFloat(rawNat.ecos) > 0 ? `<strong>(${rawNat.ecos} ECOs)</strong>` : ''}
+          <td style="padding: 9px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 700; color: #0f172a;">${d}</td>
+          <td style="padding: 9px 12px; border-bottom: 1px solid #e2e8f0; color: #0284c7;">
+            ${info.natEcos > 0 ? `<strong>${info.natEcos.toFixed(1)}</strong> <span style="font-size:10px; color:#64748b;">(${Math.round(info.natMin)}m)</span>` : '-'}
           </td>
-          <td style="padding: 10px; border-bottom: 1px solid #e2e8f0; color: #047857;">
-            ${rawCic.minutos ? `${rawCic.minutos} min` : '-'} 
-            ${parseFloat(rawCic.ecos) > 0 ? `<strong>(${rawCic.ecos} ECOs)</strong>` : ''}
+          <td style="padding: 9px 12px; border-bottom: 1px solid #e2e8f0; color: #16a34a;">
+            ${info.cicEcos > 0 ? `<strong>${info.cicEcos.toFixed(1)}</strong> <span style="font-size:10px; color:#64748b;">(${Math.round(info.cicMin)}m)</span>` : '-'}
           </td>
-          <td style="padding: 10px; border-bottom: 1px solid #e2e8f0; color: #c2410c;">
-            ${rawCar.minutos ? `${rawCar.minutos} min` : '-'} 
-            ${parseFloat(rawCar.ecos) > 0 ? `<strong>(${rawCar.ecos} ECOs)</strong>` : ''}
+          <td style="padding: 9px 12px; border-bottom: 1px solid #e2e8f0; color: #ea580c;">
+            ${info.carEcos > 0 ? `<strong>${info.carEcos.toFixed(1)}</strong> <span style="font-size:10px; color:#64748b;">(${Math.round(info.carMin)}m)</span>` : '-'}
           </td>
-          <td style="padding: 10px; border-bottom: 1px solid #e2e8f0; font-weight: 900; text-align: right; color: #2563eb;">
-            ${info.total.toFixed(1)}
+          <td style="padding: 9px 12px; border-bottom: 1px solid #e2e8f0; color: #8b5cf6;">
+            ${info.fueEcos > 0 ? `<strong>${info.fueEcos.toFixed(1)}</strong> <span style="font-size:10px; color:#64748b;">(${info.fueReps} reps)</span>` : '-'}
+          </td>
+          <td style="padding: 9px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 900; text-align: right; color: #2563eb; font-size: 13px;">
+            ${info.totalEcos.toFixed(1)}
           </td>
         </tr>
       `;
@@ -296,1228 +481,1286 @@ export default function EcosTab({ atletas, onSaveEcos }) {
 
     const htmlContent = `
       <!DOCTYPE html>
-      <html>
+      <html lang="es">
         <head>
           <meta charset="utf-8" />
-          <title>Carga de Entrenamiento Semanal - ${selectedAthlete.nombre}</title>
+          <title>Informe de Carga ECOs - ${selectedAthlete.nombre}</title>
           <style>
-            body {
-              font-family: 'Helvetica Neue', Arial, sans-serif;
-              color: #1e293b;
-              margin: 0;
-              padding: 24px;
-              background-color: #f8fafc;
-            }
-            .card {
-              background-color: #ffffff;
-              border: 1px solid #e2e8f0;
-              border-radius: 16px;
-              padding: 24px;
-              max-width: 600px;
-              margin: 0 auto;
-              box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
-            }
-            .header {
-              border-bottom: 2px solid #3b82f6;
-              padding-bottom: 16px;
-              margin-bottom: 20px;
-            }
-            .title {
-              font-size: 20px;
-              font-weight: 800;
-              color: #0f172a;
-              text-transform: uppercase;
-              letter-spacing: 0.5px;
-            }
-            .subtitle {
-              font-size: 12px;
-              color: #64748b;
-              margin-top: 4px;
-              font-weight: 550;
-            }
-            .meta-grid {
-              display: grid;
-              grid-template-columns: 1fr 1fr;
-              gap: 12px;
-              margin-bottom: 20px;
-              background-color: #f1f5f9;
-              padding: 12px;
-              border-radius: 8px;
-              font-size: 13px;
-            }
-            .meta-item {
-              margin-bottom: 4px;
-            }
-            .meta-label {
-              font-weight: 700;
-              color: #475569;
-            }
-            .table {
-              width: 100%;
-              border-collapse: collapse;
-              margin-bottom: 20px;
-              font-size: 12px;
-            }
-            .th {
-              background-color: #f1f5f9;
-              padding: 10px;
-              font-weight: 800;
-              text-transform: uppercase;
-              color: #475569;
-              text-align: left;
-              border-bottom: 2px solid #cbd5e1;
-            }
-            .totals-box {
-              background-color: #eff6ff;
-              border: 1px solid #bfdbfe;
-              border-radius: 12px;
-              padding: 16px;
-              display: flex;
-              justify-content: space-between;
-              align-items: center;
-              font-size: 15px;
-              font-weight: 800;
-              color: #1e3a8a;
-            }
-            .footer {
-              text-align: center;
-              margin-top: 24px;
-              font-size: 10px;
-              color: #94a3b8;
-              font-weight: 550;
-            }
+            @page { size: A4 portrait; margin: 12mm 15mm; }
+            * { box-sizing: border-box; }
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #0f172a; margin: 0; padding: 0; font-size: 12px; }
+            .header-bar { display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #2563eb; padding-bottom: 10px; margin-bottom: 14px; }
+            .title-area h1 { font-size: 20px; font-weight: 900; margin: 0; text-transform: uppercase; }
+            .title-area p { margin: 2px 0 0 0; color: #64748b; font-weight: 600; font-size: 11px; }
+            .brand-name { font-size: 18px; font-weight: 900; color: #2563eb; text-align: right; }
+            .brand-sub { font-size: 9px; font-weight: 800; color: #64748b; text-transform: uppercase; text-align: right; }
+            
+            .info-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px 16px; margin-bottom: 14px; display: flex; justify-content: space-between; }
+            .info-col { flex: 1; }
+            .info-row { margin-bottom: 4px; font-size: 11.5px; }
+            .info-lbl { color: #64748b; font-weight: 700; text-transform: uppercase; font-size: 9.5px; }
+            .info-val { color: #0f172a; font-weight: 800; }
+
+            .kpi-row { display: flex; gap: 8px; margin-bottom: 16px; }
+            .kpi-box { flex: 1; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px; text-align: center; }
+            .kpi-title { font-size: 9.5px; font-weight: 800; text-transform: uppercase; margin-bottom: 2px; }
+            .kpi-val { font-size: 16px; font-weight: 900; color: #0f172a; }
+
+            .data-table { width: 100%; border-collapse: collapse; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; margin-bottom: 16px; }
+            .data-table th { background: #f1f5f9; color: #475569; font-size: 10px; font-weight: 800; text-transform: uppercase; padding: 8px 12px; text-align: left; border-bottom: 1.5px solid #cbd5e1; }
+            .total-row td { background: #eff6ff; font-weight: 900; font-size: 13px; border-top: 2px solid #93c5fd; }
           </style>
         </head>
         <body>
-          <div class="card">
-            <div class="header">
-              <div class="title">Resumen de Carga Semanal</div>
-              <div class="subtitle">EPL Triatlón Chile — Rendimiento Deportivo</div>
+          <div class="header-bar">
+            <div class="title-area">
+              <h1>Informe de Carga ECOs</h1>
+              <p>EPL Triatlón Chile — Cuantificación del Entrenamiento</p>
             </div>
-            
-            <div class="meta-grid">
-              <div>
-                <div class="meta-item"><span class="meta-label">Deportista:</span> ${selectedAthlete.nombre}</div>
-                <div class="meta-item"><span class="meta-label">Semana:</span> ${weekStartDateStr}</div>
-              </div>
-              <div style="text-align: right;">
-                <div class="meta-item"><span class="meta-label">Tipo Plan:</span> ${selectedAthlete.tipoPlan || 'Mensual'}</div>
-                <div class="meta-item"><span class="meta-label">Total Semanal:</span> <strong>${weeklyTotals.total.toFixed(1)} ECOs</strong></div>
-              </div>
-            </div>
-
-            <table class="table">
-              <thead>
-                <tr>
-                  <th class="th">Día</th>
-                  <th class="th" style="color: #0284c7;">🏊 Nat</th>
-                  <th class="th" style="color: #16a34a;">🚴 Cic</th>
-                  <th class="th" style="color: #ea580c;">🏃 Car</th>
-                  <th class="th" style="text-align: right; color: #2563eb;">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${dailyRowsHtml}
-              </tbody>
-            </table>
-
-            <div class="totals-box">
-              <span>Carga Total Acumulada:</span>
-              <span style="font-size: 20px; color: #2563eb;">${weeklyTotals.total.toFixed(1)} ECOs</span>
-            </div>
-
-            <div class="footer">
-              Generado electrónicamente por la plataforma de EPL Triatlón.
+            <div>
+              <div class="brand-name">EPL TRIATLÓN</div>
+              <div class="brand-sub">Calculadora Científica ECOs</div>
             </div>
           </div>
+
+          <div class="info-card">
+            <div class="info-col">
+              <div class="info-row"><span class="info-lbl">Deportista:</span> <span class="info-val">${selectedAthlete.nombre}</span></div>
+              <div class="info-row"><span class="info-lbl">Distancia Objetivo:</span> <span class="info-val">${selectedAthlete.distanciaObjetivo || 'Olímpica'}</span></div>
+            </div>
+            <div class="info-col" style="text-align: right;">
+              <div class="info-row"><span class="info-lbl">Semana Fecha:</span> <span class="info-val">${weekStartDateStr}</span></div>
+              <div class="info-row"><span class="info-lbl">Microciclo:</span> <span class="info-val">Semana ${activeWeekIndex + 1}</span></div>
+            </div>
+          </div>
+
+          <div class="kpi-row">
+            <div class="kpi-box" style="border-left: 3px solid #0284c7;">
+              <div class="kpi-title" style="color: #0284c7;">🏊 Natación</div>
+              <div class="kpi-val">${weeklyTotalNatEcos.toFixed(1)}</div>
+            </div>
+            <div class="kpi-box" style="border-left: 3px solid #16a34a;">
+              <div class="kpi-title" style="color: #16a34a;">🚴 Ciclismo</div>
+              <div class="kpi-val">${weeklyTotalCicEcos.toFixed(1)}</div>
+            </div>
+            <div class="kpi-box" style="border-left: 3px solid #ea580c;">
+              <div class="kpi-title" style="color: #ea580c;">🏃 Carrera</div>
+              <div class="kpi-val">${weeklyTotalCarEcos.toFixed(1)}</div>
+            </div>
+            <div class="kpi-box" style="border-left: 3px solid #8b5cf6;">
+              <div class="kpi-title" style="color: #8b5cf6;">🏋️ Fuerza</div>
+              <div class="kpi-val">${weeklyTotalFueEcos.toFixed(1)}</div>
+            </div>
+            <div class="kpi-box" style="background: #eff6ff; border-color: #93c5fd;">
+              <div class="kpi-title" style="color: #1e40af;">Total Semana</div>
+              <div class="kpi-val" style="color: #1d4ed8; font-size: 18px;">${weeklyTotalEcos.toFixed(1)}</div>
+            </div>
+          </div>
+
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Día</th>
+                <th>🏊 Natación (0.75)</th>
+                <th>🚴 Ciclismo (0.50)</th>
+                <th>🏃 Carrera (1.00)</th>
+                <th>🏋️ Fuerza</th>
+                <th style="text-align: right;">Total ECOs</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${dailyRowsHtml}
+              <tr class="total-row">
+                <td style="padding: 10px 12px; color: #1e40af;">TOTAL SEMANAL</td>
+                <td style="padding: 10px 12px; color: #0284c7;">${weeklyTotalNatEcos.toFixed(1)}</td>
+                <td style="padding: 10px 12px; color: #16a34a;">${weeklyTotalCicEcos.toFixed(1)}</td>
+                <td style="padding: 10px 12px; color: #ea580c;">${weeklyTotalCarEcos.toFixed(1)}</td>
+                <td style="padding: 10px 12px; color: #8b5cf6;">${weeklyTotalFueEcos.toFixed(1)}</td>
+                <td style="padding: 10px 12px; text-align: right; color: #1d4ed8; font-size: 16px;">${weeklyTotalEcos.toFixed(1)}</td>
+              </tr>
+            </tbody>
+          </table>
         </body>
       </html>
     `;
 
     if (Platform.OS === 'web') {
-      try {
-        const printWindow = window.open('', '_blank');
-        if (printWindow) {
-          printWindow.document.write(htmlContent);
-          printWindow.document.close();
-          setTimeout(() => {
-            printWindow.focus();
-            printWindow.print();
-          }, 250);
-        } else {
-          Alert.alert("Ventana emergente bloqueada", "Permite las ventanas emergentes en tu navegador para imprimir.");
-        }
-      } catch (e) {
-        Alert.alert("Error", "Fallo al abrir ventana de impresión: " + e.message);
+      const printWindow = window.open('', '_blank');
+      if (printWindow) {
+        printWindow.document.write(htmlContent);
+        printWindow.document.close();
+        setTimeout(() => {
+          printWindow.focus();
+          printWindow.print();
+        }, 300);
       }
       return;
     }
 
     try {
-      const { uri } = await Print.printToFileAsync({
-        html: htmlContent,
-        base64: false
-      });
-
-      const isAvailable = await Sharing.isAvailableAsync();
-      if (isAvailable) {
-        await Sharing.shareAsync(uri, {
-          mimeType: 'application/pdf',
-          dialogTitle: `Resumen de Carga Semanal - ${selectedAthlete.nombre}`,
-          UTI: 'com.adobe.pdf'
-        });
-      } else {
-        Alert.alert("Error", "Compartir no disponible en este dispositivo.");
-      }
-    } catch (error) {
-      Alert.alert("Error", "Hubo un error al compartir el PDF: " + error.message);
+      const { uri } = await Print.printToFileAsync({ html: htmlContent, base64: false });
+      await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: `ECOs - ${selectedAthlete.nombre}` });
+    } catch (e) {
+      Alert.alert('Error', 'No se pudo generar el PDF: ' + e.message);
     }
   };
-
-  const handleWipeEcosWeekly = () => {
-    Alert.alert(
-      'Limpiar Calculadora',
-      '¿Estás seguro de restablecer todos los inputs de la semana a cero?',
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        { text: 'Limpiar', onPress: () => setEcosState(createInitialEcosState()), style: 'destructive' }
-      ]
-    );
-  };
-
-  const handleShareEcos = async (entry, athleteName) => {
-    const text = `⚡ *EPL Triatlón - Resumen de Carga Semanal* ⚡\n\n` +
-      `👤 *Atleta:* ${athleteName}\n` +
-      `📅 *Semana del:* ${entry.semanaFecha}\n` +
-      `---------------------------------\n` +
-      `🏊 *Natación:* ${entry.totals.nat.toFixed(1)} ECOs\n` +
-      `🚴 *Ciclismo:* ${entry.totals.cic.toFixed(1)} ECOs\n` +
-      `🏃 *Carrera:* ${entry.totals.car.toFixed(1)} ECOs\n\n` +
-      `🔥 *CARGA TOTAL:* ${entry.totals.total.toFixed(1)} ECOs\n` +
-      `---------------------------------\n` +
-      `¡Excelente entrenamiento! Mantén el ritmo. 🏊🚴🏃`;
-
-    Clipboard.setString(text);
-
-    try {
-      const whatsappUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`;
-      const whatsappAppUrl = `whatsapp://send?text=${encodeURIComponent(text)}`;
-
-      if (Platform.OS === 'web') {
-        if (typeof window !== 'undefined') {
-          window.open(whatsappUrl, '_blank');
-        }
-      } else {
-        const canOpen = await Linking.canOpenURL(whatsappAppUrl);
-        if (canOpen) {
-          await Linking.openURL(whatsappAppUrl);
-        } else {
-          await Share.share({
-            message: text,
-            title: `Carga Semanal ECOs - ${athleteName}`
-          });
-        }
-      }
-    } catch (error) {
-      console.log('Share error:', error);
-      Alert.alert('Copiado', 'Resumen de carga semanal copiado al portapapeles.');
-    }
-  };
-
-  // Calculations for charts and summaries
-  const getDayTotals = (dayData) => {
-    const nat = parseFloat(dayData.natacion.ecos) || 0;
-    const cic = parseFloat(dayData.ciclismo.ecos) || 0;
-    const car = parseFloat(dayData.carrera.ecos) || 0;
-    return { nat, cic, car, total: nat + cic + car };
-  };
-
-  const totalsByDay = {};
-  DAYS.forEach(d => {
-    totalsByDay[d] = getDayTotals(ecosState[d]);
-  });
-
-  const weeklyTotals = { nat: 0, cic: 0, car: 0, total: 0 };
-  DAYS.forEach(d => {
-    weeklyTotals.nat += totalsByDay[d].nat;
-    weeklyTotals.cic += totalsByDay[d].cic;
-    weeklyTotals.car += totalsByDay[d].car;
-    weeklyTotals.total += totalsByDay[d].total;
-  });
-
-  const maxDaily = Math.max(...DAYS.map(d => totalsByDay[d].total), 1);
-
 
   if (!atletas || atletas.length === 0) {
     return (
-      <View style={styles.emptyContainer}>
-        <Ionicons name="people-outline" size={64} color={theme.textMuted} />
-        <Text style={[styles.emptyText, { color: theme.textSecondary }]}>
-          Registra un atleta en la pestaña "Cobros" antes de poder usar la calculadora de ECOs.
-        </Text>
+      <View style={[styles.container, styles.center]}>
+        <Ionicons name="flash-outline" size={56} color={theme.textMuted} />
+        <Text style={styles.emptyText}>No hay atletas registrados</Text>
       </View>
     );
   }
 
-  const activeDayData = ecosState[activeDay] || createInitialEcosState()['Lunes'];
+  const currentDayData = ecosState[activeDay] || {
+    natacion: createInitialDaySportState(),
+    ciclismo: createInitialDaySportState(),
+    carrera: createInitialDaySportState(),
+    fuerza: { ejercicios: [], totalReps: 0, ecos: 0 }
+  };
 
-  const planSeasons = selectedAthlete?.plan?.mesos ? (selectedAthlete.plan.mesos * 4) : 12;
-  const weekOptions = selectedAthlete?.plan 
-    ? Array.from({ length: planSeasons }, (_, i) => {
-        const startStr = getEcosWeekStartDate(selectedAthlete, i);
-        return {
-          index: i,
-          label: `Semana ${i + 1}`,
-          date: startStr
-        };
-      })
-    : [{ index: 0, label: 'Semana General', date: getEcosWeekStartDate(selectedAthlete, 0) }];
+  const activeStrengthList = currentDayData.fuerza?.ejercicios || [];
+  const activeDaySummary = getDaySummary(activeDay);
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer} showsVerticalScrollIndicator={false}>
-      {/* Athlete Selector */}
-      <Text style={styles.sectionTitle}>Selección de Deportista</Text>
+      
+      {/* 1. ATHLETES SELECTOR */}
       <View style={styles.selectorCard}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.athleteScroller}>
-          {atletas.map(a => (
-            <TouchableOpacity
-              activeOpacity={0.8}
-              key={a.id}
-              style={[
-                styles.athleteBubble,
-                selectedAtletaId === a.id ? { backgroundColor: theme.primary, borderColor: theme.primary } : null
-              ]}
-              onPress={() => handleSelectAthlete(a.id)}
-            >
-              <Ionicons
-                name="person"
-                size={12}
-                color={selectedAtletaId === a.id ? '#fff' : theme.textSecondary}
-                style={{ marginRight: 6 }}
-              />
-              <Text style={[
-                styles.athleteBubbleText,
-                { color: selectedAtletaId === a.id ? '#fff' : theme.textSecondary }
-              ]}>
-                {a.nombre}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </View>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+          <Text style={styles.label}>SELECCIONAR ATLETA</Text>
+          {selectedAthlete?.distanciaObjetivo ? (
+            <View style={[styles.targetBadge, { backgroundColor: theme.primary + '18', borderColor: theme.primary }]}>
+              <Text style={[styles.targetBadgeText, { color: theme.primary }]}>🎯 {selectedAthlete.distanciaObjetivo}</Text>
+            </View>
+          ) : null}
+        </View>
 
-      {/* Week Selector */}
-      <Text style={styles.sectionTitle}>Semana de Planificación</Text>
-      <View style={styles.selectorCard}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.athleteScroller}>
-          {weekOptions.map(w => (
-            <TouchableOpacity
-              activeOpacity={0.8}
-              key={w.index}
-              style={[
-                styles.athleteBubble,
-                activeWeekIndex === w.index ? { backgroundColor: theme.success, borderColor: theme.success } : null
-              ]}
-              onPress={() => setActiveWeekIndex(w.index)}
-            >
-              <Ionicons
-                name="calendar-outline"
-                size={12}
-                color={activeWeekIndex === w.index ? '#fff' : theme.textSecondary}
-                style={{ marginRight: 6 }}
-              />
-              <Text style={[
-                styles.athleteBubbleText,
-                { color: activeWeekIndex === w.index ? '#fff' : theme.textSecondary }
-              ]}>
-                {w.label} ({w.date})
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </View>
-
-      {/* Weekly Summary Dashboard */}
-      <Text style={styles.sectionTitle}>Resumen Semanal de Carga</Text>
-      <View style={styles.card}>
-        <View style={styles.weeklyHeaderRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.label}>Esfuerzo Semanal Acumulado</Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 4 }}>
-              <Text style={styles.weeklyTotalText}>{weeklyTotals.total.toFixed(1)} <Text style={{ fontSize: 13, color: theme.primary }}>ECOs</Text></Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.scroller}>
+          {atletas.map(a => {
+            const isSel = a.id === selectedAthlete?.id;
+            return (
               <TouchableOpacity
-                activeOpacity={0.7}
-                style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: theme.surfaceSecondary, borderWidth: 1, borderColor: theme.border, justifyContent: 'center', alignItems: 'center' }}
-                onPress={handleShareCurrentWeekPDF}
+                key={a.id}
+                style={[styles.bubble, isSel ? { backgroundColor: theme.primary, borderColor: theme.primary } : null]}
+                onPress={() => {
+                  setSelectedAtletaId(a.id);
+                  setActiveWeekIndex(0);
+                }}
+                activeOpacity={0.8}
               >
-                <Ionicons name="share-social" size={14} color={theme.primary} />
+                <Ionicons name="person" size={12} color={isSel ? '#fff' : theme.textSecondary} style={{ marginRight: 6 }} />
+                <Text style={[styles.bubbleText, { color: isSel ? '#fff' : theme.textSecondary }]} numberOfLines={1}>
+                  {a.nombre}
+                </Text>
               </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      </View>
+
+      {/* 2. DAY OF WEEK SELECTOR */}
+      <View style={styles.card}>
+        <Text style={styles.label}>DÍA DEL ENTRENAMIENTO</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.daysScroll}>
+          {DAYS.map(day => {
+            const isSel = activeDay === day;
+            const dayEcos = totalsByDay[day]?.totalEcos || 0;
+            return (
+              <TouchableOpacity
+                key={day}
+                style={[styles.dayPill, isSel && styles.dayPillActive]}
+                onPress={() => setActiveDay(day)}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.dayPillText, isSel && styles.dayPillTextActive]}>{day.substring(0, 3)}</Text>
+                <Text style={[styles.dayPillEcos, isSel ? { color: 'rgba(255,255,255,0.9)' } : { color: theme.primary }]}>
+                  {dayEcos > 0 ? `${dayEcos.toFixed(0)}` : '0'}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      </View>
+
+      {/* 3. SPORT & STRENGTH SELECTOR TABS */}
+      <View style={styles.sportTabsRow}>
+        {[
+          { id: 'natacion', label: 'Natación', icon: 'water', factor: '0.75', color: theme.swim || '#38bdf8' },
+          { id: 'ciclismo', label: 'Ciclismo', icon: 'bicycle', factor: '0.50', color: theme.bike || '#4ade80' },
+          { id: 'carrera', label: 'Carrera', icon: 'walk', factor: '1.00', color: theme.run || '#fb923c' },
+          { id: 'fuerza', label: 'Fuerza', icon: 'barbell', factor: 'Exacto', color: '#a855f7' },
+        ].map(s => {
+          const isSel = activeSportTab === s.id;
+          return (
+            <TouchableOpacity
+              key={s.id}
+              style={[styles.sportTab, isSel ? { backgroundColor: s.color, borderColor: s.color } : null]}
+              onPress={() => setActiveSportTab(s.id)}
+              activeOpacity={0.8}
+            >
+              <Ionicons name={s.icon} size={14} color={isSel ? '#fff' : theme.textSecondary} style={{ marginRight: 4 }} />
+              <Text style={[styles.sportTabText, isSel ? { color: '#fff' } : null]}>{s.label}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      {/* 4. MAIN SPORT CALCULATOR (8 ZONES MATRIX) */}
+      {activeSportTab !== 'fuerza' && (
+        <View style={styles.card}>
+          <View style={styles.sportCardHeader}>
+            <View>
+              <Text style={styles.cardTitle}>
+                {activeSportTab === 'natacion' ? '🏊 NATACIÓN (Factor 0.75)' : activeSportTab === 'ciclismo' ? '🚴 CICLISMO (Factor 0.50)' : '🏃 CARRERA (Factor 1.00)'}
+              </Text>
+              <Text style={styles.cardSubtitle}>Ingresa los minutos realizados en cada zona para el {activeDay}:</Text>
             </View>
+
+            {(activeSportTab === 'natacion' || activeSportTab === 'carrera') && (
+              <TouchableOpacity
+                style={styles.converterQuickBtn}
+                onPress={() => setShowConverterSport(activeSportTab)}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="calculator-outline" size={13} color={theme.primary} style={{ marginRight: 4 }} />
+                <Text style={styles.converterQuickBtnText}>Calc. Ritmo</Text>
+              </TouchableOpacity>
+            )}
           </View>
-          <View style={styles.sportsLegend}>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: theme.swim }]} />
-              <Text style={styles.legendText}>🏊 {weeklyTotals.nat.toFixed(0)}</Text>
+
+          {/* 8 ZONES GRID */}
+          <View style={styles.zonesTable}>
+            <View style={styles.zonesTableHeader}>
+              <Text style={[styles.zonesTh, { flex: 1.2 }]}>ZONA</Text>
+              <Text style={[styles.zonesTh, { flex: 1.8 }]}>DESCRIPCIÓN</Text>
+              <Text style={[styles.zonesTh, { flex: 0.8, textAlign: 'center' }]}>COEF</Text>
+              <Text style={[styles.zonesTh, { flex: 1.4, textAlign: 'center' }]}>MINUTOS</Text>
+              <Text style={[styles.zonesTh, { flex: 1.1, textAlign: 'right' }]}>ECOS</Text>
             </View>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: theme.bike }]} />
-              <Text style={styles.legendText}>🚴 {weeklyTotals.cic.toFixed(0)}</Text>
-            </View>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: theme.run }]} />
-              <Text style={styles.legendText}>🏃 {weeklyTotals.car.toFixed(0)}</Text>
+
+            {ZONES_INFO.map(z => {
+              const zoneData = currentDayData[activeSportTab]?.zones?.[z.id] || { min: '', seg: '' };
+              const m = parseFloat(zoneData.min) || 0;
+              const s = parseFloat(zoneData.seg) || 0;
+              const factor = SPORT_FACTORS[activeSportTab] || 1.0;
+              const zEcos = (m + s/60) * z.coef * factor;
+
+              return (
+                <View key={z.id} style={styles.zoneRowItem}>
+                  <View style={[styles.zoneBadge, { backgroundColor: z.color + '22', borderColor: z.color }]}>
+                    <Text style={[styles.zoneBadgeText, { color: z.color }]}>{z.name}</Text>
+                  </View>
+
+                  <Text style={styles.zoneDescText} numberOfLines={1}>{z.label}</Text>
+                  
+                  <Text style={styles.zoneCoefText}>x{z.coef}</Text>
+
+                  <View style={styles.zoneInputWrap}>
+                    <TextInput
+                      style={styles.zoneMinInput}
+                      keyboardType="numeric"
+                      placeholder="0"
+                      placeholderTextColor={theme.textMuted}
+                      value={zoneData.min}
+                      onChangeText={val => handleZoneTimeChange(activeSportTab, z.id, 'min', val)}
+                    />
+                    <Text style={styles.minUnitText}>m</Text>
+                  </View>
+
+                  <Text style={[styles.zoneEcosVal, zEcos > 0 ? { color: theme.primary, fontWeight: '900' } : { color: theme.textMuted }]}>
+                    {zEcos > 0 ? zEcos.toFixed(1) : '0.0'}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
+
+          {/* Subtotal of the Sport */}
+          <View style={styles.sportSubtotalRow}>
+            <Text style={styles.subtotalLabel}>Subtotal {activeSportTab.toUpperCase()}:</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <Text style={styles.subtotalMinText}>{Math.round(currentDayData[activeSportTab]?.totalMin || 0)} min</Text>
+              <View style={[styles.subtotalBadge, { backgroundColor: theme.primary + '18', borderColor: theme.primary }]}>
+                <Text style={[styles.subtotalBadgeText, { color: theme.primary }]}>
+                  {(currentDayData[activeSportTab]?.ecos || 0).toFixed(1)} ECOs
+                </Text>
+              </View>
             </View>
           </View>
         </View>
+      )}
 
-        {/* Visual Daily Stacked Bar Chart */}
-        <View style={styles.chartContainer}>
-          {DAYS.map(d => {
-            const dayInfo = totalsByDay[d];
-            const swimHeight = (dayInfo.nat / maxDaily) * 100;
-            const bikeHeight = (dayInfo.cic / maxDaily) * 100;
-            const runHeight = (dayInfo.car / maxDaily) * 100;
+      {/* 5. STRENGTH CALCULATOR (FUERZA: LEVANTAMIENTOS & SALTOS) */}
+      {activeSportTab === 'fuerza' && (
+        <View style={styles.card}>
+          <View style={styles.sportCardHeader}>
+            <View>
+              <Text style={[styles.cardTitle, { color: '#8b5cf6' }]}>🏋️ FUERZA Y POTENCIA</Text>
+              <Text style={styles.cardSubtitle}>Levantamientos, Saltos y Lanzamientos con factores exactos:</Text>
+            </View>
+            <TouchableOpacity
+              style={[styles.btnActionSmall, { backgroundColor: '#8b5cf6', borderColor: '#8b5cf6' }]}
+              onPress={() => setShowAddStrengthModal(true)}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="add" size={14} color="#fff" style={{ marginRight: 4 }} />
+              <Text style={[styles.btnActionSmallText, { color: '#fff' }]}>+ Ejercicio</Text>
+            </TouchableOpacity>
+          </View>
 
-            const isCurrent = activeDay === d;
+          {/* Exercises list for today */}
+          {activeStrengthList.length > 0 ? (
+            <View style={styles.strengthList}>
+              {activeStrengthList.map((ej) => (
+                <View key={ej.id} style={styles.strengthItemCard}>
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={styles.strengthItemName}>{ej.nombre}</Text>
+                      <View style={[styles.strengthCatBadge, { backgroundColor: '#8b5cf6' + '18', borderColor: '#8b5cf6' + '40' }]}>
+                        <Text style={[styles.strengthCatBadgeText, { color: '#8b5cf6' }]}>{ej.categoriaNombre}</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.strengthItemDetails}>
+                      {ej.series ? `${ej.series} series × ${ej.reps} reps = ` : ''}{ej.totalReps} reps totales • Factor: {ej.factor}
+                    </Text>
+                  </View>
 
-            return (
-              <TouchableOpacity key={d} style={styles.chartColWrapper} activeOpacity={0.8} onPress={() => setActiveDay(d)}>
-                <View style={styles.chartColContainer}>
-                  {/* Bar Background track */}
-                  <View style={[styles.chartColTrack, isCurrent ? { borderColor: theme.primary, borderWidth: 1 } : null]}>
-                    <View style={styles.barStackSpacer} />
-                    {/* Swim part */}
-                    {swimHeight > 0 && <View style={[styles.barStackSwim, { height: `${swimHeight}%`, backgroundColor: theme.swim }]} />}
-                    {/* Bike part */}
-                    {bikeHeight > 0 && <View style={[styles.barStackBike, { height: `${bikeHeight}%`, backgroundColor: theme.bike }]} />}
-                    {/* Run part */}
-                    {runHeight > 0 && <View style={[styles.barStackRun, { height: `${runHeight}%`, backgroundColor: theme.run }]} />}
+                  <View style={{ alignItems: 'flex-end', marginLeft: 10 }}>
+                    <Text style={[styles.strengthItemEcos, { color: '#8b5cf6' }]}>
+                      {ej.ecos.toFixed(1)} ECOs
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => handleDeleteStrengthExercise(ej.id)}
+                      style={styles.deleteMiniBtn}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="trash-outline" size={14} color={theme.error} />
+                    </TouchableOpacity>
                   </View>
                 </View>
-                <Text style={[styles.chartLabel, isCurrent ? { color: theme.primary, fontWeight: '900' } : { color: theme.textSecondary }]}>
-                  {d.substring(0, 2)}
+              ))}
+            </View>
+          ) : (
+            <View style={styles.emptyBox}>
+              <Ionicons name="barbell-outline" size={32} color={theme.textMuted} />
+              <Text style={styles.emptyBoxText}>No hay ejercicios de fuerza añadidos para el {activeDay}.</Text>
+              <TouchableOpacity
+                style={[styles.btnAddQuickStrength, { backgroundColor: '#8b5cf6' }]}
+                onPress={() => setShowAddStrengthModal(true)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.btnAddQuickStrengthText}>+ Añadir Ejercicio de Fuerza</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Strength Subtotal */}
+          <View style={styles.sportSubtotalRow}>
+            <Text style={styles.subtotalLabel}>Subtotal Fuerza ({activeDay}):</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <Text style={styles.subtotalMinText}>{currentDayData.fuerza?.totalReps || 0} reps</Text>
+              <View style={[styles.subtotalBadge, { backgroundColor: '#8b5cf6' + '18', borderColor: '#8b5cf6' }]}>
+                <Text style={[styles.subtotalBadgeText, { color: '#8b5cf6' }]}>
+                  {(currentDayData.fuerza?.ecos || 0).toFixed(1)} ECOs
                 </Text>
-                <Text style={styles.chartValueLabel}>{dayInfo.total.toFixed(0)}</Text>
+              </View>
+            </View>
+          </View>
+        </View>
+      )}
+
+      {/* 6. DAY TOTAL CARDS */}
+      <View style={[styles.card, { borderColor: theme.primary + '40', backgroundColor: theme.surface }]}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+          <View>
+            <Text style={styles.cardTitle}>CARGA TOTAL DEL {activeDay.toUpperCase()}</Text>
+            <Text style={styles.cardSubtitle}>Nat: {activeDaySummary.natEcos.toFixed(1)} • Cic: {activeDaySummary.cicEcos.toFixed(1)} • Car: {activeDaySummary.carEcos.toFixed(1)} • Fue: {activeDaySummary.fueEcos.toFixed(1)}</Text>
+          </View>
+          <View style={[styles.totalDayBadge, { backgroundColor: theme.primary }]}>
+            <Text style={styles.totalDayBadgeVal}>{activeDaySummary.totalEcos.toFixed(1)}</Text>
+            <Text style={styles.totalDayBadgeLbl}>ECOs</Text>
+          </View>
+        </View>
+      </View>
+
+      {/* 7. WEEKLY RECAP TABLE & ACTIONS */}
+      <View style={styles.card}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <Text style={styles.cardTitle}>RESUMEN DE LA SEMANA</Text>
+          <Text style={[styles.cardTitle, { color: theme.primary }]}>{weeklyTotalEcos.toFixed(1)} ECOs</Text>
+        </View>
+
+        <View style={styles.weeklyTableWrap}>
+          {DAYS.map(day => {
+            const s = totalsByDay[day] || { totalEcos: 0 };
+            return (
+              <TouchableOpacity
+                key={day}
+                style={[styles.weeklyRow, activeDay === day && { backgroundColor: theme.primary + '12' }]}
+                onPress={() => setActiveDay(day)}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.weeklyRowDay, activeDay === day && { color: theme.primary, fontWeight: '900' }]}>{day}</Text>
+                <Text style={[styles.weeklyRowSport, { color: theme.swim }]}>{s.natEcos > 0 ? `${s.natEcos.toFixed(1)}` : '-'}</Text>
+                <Text style={[styles.weeklyRowSport, { color: theme.bike }]}>{s.cicEcos > 0 ? `${s.cicEcos.toFixed(1)}` : '-'}</Text>
+                <Text style={[styles.weeklyRowSport, { color: theme.run }]}>{s.carEcos > 0 ? `${s.carEcos.toFixed(1)}` : '-'}</Text>
+                <Text style={[styles.weeklyRowSport, { color: '#8b5cf6' }]}>{s.fueEcos > 0 ? `${s.fueEcos.toFixed(1)}` : '-'}</Text>
+                <Text style={[styles.weeklyRowTotal, { color: s.totalEcos > 0 ? theme.text : theme.textMuted }]}>
+                  {s.totalEcos.toFixed(1)}
+                </Text>
               </TouchableOpacity>
             );
           })}
         </View>
-      </View>
 
-      {/* Day selector tabs */}
-      <Text style={styles.sectionTitle}>Control Diario: {activeDay}</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.daySelectorRow}>
-        {DAYS.map(d => (
-          <TouchableOpacity
-            key={d}
-            style={[
-              styles.dayTab,
-              activeDay === d ? { backgroundColor: theme.primary, borderColor: theme.primary } : { backgroundColor: theme.surfaceSecondary, borderColor: theme.border }
-            ]}
-            onPress={() => {
-              setActiveDay(d);
-              setShowConverterSport(null);
-            }}
-            activeOpacity={0.7}
-          >
-            <Text style={[
-              styles.dayTabText,
-              { color: activeDay === d ? '#fff' : theme.textSecondary }
-            ]}>
-              {d}
-            </Text>
+        {/* Action Buttons */}
+        <View style={styles.actionsRow}>
+          <TouchableOpacity style={styles.btnSaveWeekly} onPress={handleSaveEcosWeekly} activeOpacity={0.8}>
+            <Ionicons name="save" size={16} color="#fff" style={{ marginRight: 6 }} />
+            <Text style={styles.btnSaveWeeklyText}>Guardar Carga Semanal</Text>
           </TouchableOpacity>
-        ))}
-      </ScrollView>
 
-      {/* Discipline Cards */}
-      <View style={styles.disciplineCardsContainer}>
-        {/* ==================== 1. NATACION ==================== */}
-        <View style={styles.disciplineCard}>
-          <View style={[styles.cardAccentStripe, { backgroundColor: theme.swim }]} />
-          
-          <View style={styles.disciplineCardHeader}>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Ionicons name="water" size={16} color={theme.swim} style={{ marginRight: 6 }} />
-              <Text style={[styles.disciplineTitle, { color: theme.swim }]}>Natación</Text>
-            </View>
-            <TouchableOpacity 
-              activeOpacity={0.8} 
-              style={[styles.btnConvToggle, { borderColor: theme.swim }]}
-              onPress={() => {
-                setShowConverterSport(showConverterSport === 'natacion' ? null : 'natacion');
-              }}
-            >
-              <Text style={{ fontSize: 9, fontWeight: '800', color: theme.swim, textTransform: 'uppercase' }}>m → min</Text>
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity style={styles.btnExportPdf} onPress={handleShareCurrentWeekPDF} activeOpacity={0.8}>
+            <Ionicons name="document-text-outline" size={16} color="#fff" style={{ marginRight: 6 }} />
+            <Text style={styles.btnExportPdfText}>Informe PDF</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
 
-          {/* Converter inline */}
-          {showConverterSport === 'natacion' && (
-            <View style={[styles.converterBox, { backgroundColor: theme.background, borderColor: theme.border }]}>
-              <Text style={styles.converterTitle}>Conversión: Metros a Minutos (Natación)</Text>
-              <View style={styles.converterInputsRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.label}>Distancia (Metros)</Text>
-                  <TextInput
-                    style={[styles.formInput, { backgroundColor: theme.surface }]}
-                    placeholder="Ej: 800"
-                    placeholderTextColor={theme.textMuted}
-                    value={convDist}
-                    onChangeText={setConvDist}
-                    keyboardType="numeric"
-                  />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.label}>Ritmo/100m (min, ej: 1.8)</Text>
-                  <TextInput
-                    style={[styles.formInput, { backgroundColor: theme.surface }]}
-                    placeholder="Ej: 1.75"
-                    placeholderTextColor={theme.textMuted}
-                    value={convRitmo}
-                    onChangeText={setConvRitmo}
-                    keyboardType="numeric"
-                  />
-                </View>
-              </View>
-              <TouchableOpacity activeOpacity={0.8} style={[styles.btnConvSubmit, { backgroundColor: theme.swim }]} onPress={() => handleConvert('natacion')}>
-                <Text style={styles.btnConvSubmitText}>Calcular y Cargar</Text>
+      <View style={{ height: 60 }} />
+
+      {/* MODAL: ADD STRENGTH EXERCISE */}
+      <Modal visible={showAddStrengthModal} transparent animationType="slide" onRequestClose={() => setShowAddStrengthModal(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Añadir Ejercicio de Fuerza ({activeDay})</Text>
+              <TouchableOpacity onPress={() => setShowAddStrengthModal(false)} activeOpacity={0.7}>
+                <Ionicons name="close" size={22} color={theme.textSecondary} />
               </TouchableOpacity>
             </View>
-          )}
 
-          {/* Inputs Row */}
-          <View style={styles.inputsGrid}>
-            <View style={styles.inputCol}>
-              <Text style={styles.label}>Reps</Text>
-              <TextInput
-                style={[styles.formInput, focusedInput === 'nat-reps' ? styles.inputFocused : null]}
-                value={activeDayData.natacion.reps}
-                onChangeText={v => handleInputChange('natacion', 'reps', v)}
-                keyboardType="numeric"
-                onFocus={() => setFocusedInput('nat-reps')}
-                onBlur={() => setFocusedInput(null)}
-              />
-            </View>
-            <View style={styles.inputCol}>
-              <Text style={styles.label}>Minutos</Text>
-              <TextInput
-                style={[styles.formInput, focusedInput === 'nat-min' ? styles.inputFocused : null]}
-                value={activeDayData.natacion.minutos}
-                placeholder="0"
-                placeholderTextColor={theme.textMuted}
-                onChangeText={v => handleInputChange('natacion', 'minutos', v)}
-                keyboardType="numeric"
-                onFocus={() => setFocusedInput('nat-min')}
-                onBlur={() => setFocusedInput(null)}
-              />
-            </View>
-            <View style={styles.inputCol}>
-              <Text style={styles.label}>Segundos</Text>
-              <TextInput
-                style={[styles.formInput, focusedInput === 'nat-seg' ? styles.inputFocused : null]}
-                value={activeDayData.natacion.segundos}
-                placeholder="0"
-                placeholderTextColor={theme.textMuted}
-                onChangeText={v => handleInputChange('natacion', 'segundos', v)}
-                keyboardType="numeric"
-                onFocus={() => setFocusedInput('nat-seg')}
-                onBlur={() => setFocusedInput(null)}
-              />
-            </View>
-            <View style={styles.inputCol}>
-              <Text style={styles.label}>Zona</Text>
-              <View style={styles.selectWrapper}>
-                <TextInput
-                  style={[styles.formInput, { textAlign: 'center' }, focusedInput === 'nat-zona' ? styles.inputFocused : null]}
-                  value={activeDayData.natacion.zona}
-                  onChangeText={v => {
-                    const num = parseInt(v);
-                    if (!isNaN(num) && num >= 1 && num <= 8) {
-                      handleInputChange('natacion', 'zona', v);
-                    } else if (v === '') {
-                      handleInputChange('natacion', 'zona', '');
-                    }
-                  }}
-                  keyboardType="numeric"
-                  maxLength={1}
-                  onFocus={() => setFocusedInput('nat-zona')}
-                  onBlur={() => setFocusedInput(null)}
-                />
+            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 440 }}>
+              
+              {/* Type Switcher: Levantamientos vs Saltos */}
+              <Text style={styles.label}>1. MODALIDAD / TIPO</Text>
+              <View style={styles.typeSelectorRow}>
+                <TouchableOpacity
+                  style={[styles.typeBtn, strType === 'levantamientos' && styles.typeBtnActive]}
+                  onPress={() => setStrType('levantamientos')}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.typeBtnText, strType === 'levantamientos' && styles.typeBtnTextActive]}>
+                    🏋️ Levantamientos (Pesas)
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.typeBtn, strType === 'saltos' && styles.typeBtnActive]}
+                  onPress={() => setStrType('saltos')}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.typeBtnText, strType === 'saltos' && styles.typeBtnTextActive]}>
+                    🦘 Saltos y Lanzamientos
+                  </Text>
+                </TouchableOpacity>
               </View>
-            </View>
-          </View>
 
-          {/* Results Summary Row */}
-          <View style={styles.resultDetailsBox}>
-            <View style={styles.resultDetailCol}>
-              <Text style={styles.resultDetailLabel}>Tiempo Total</Text>
-              <Text style={styles.resultDetailValue}>{(activeDayData.natacion.total || 0).toFixed(2)} min</Text>
-            </View>
-            <View style={styles.resultDetailCol}>
-              <Text style={styles.resultDetailLabel}>Coeficiente</Text>
-              <Text style={styles.resultDetailValue}>× {COEF[activeDayData.natacion.zona] || 1}</Text>
-            </View>
-            <View style={styles.resultDetailCol}>
-              <Text style={styles.resultDetailLabel}>Factor Deporte</Text>
-              <Text style={styles.resultDetailValue}>× 0.75</Text>
-            </View>
-            <View style={[styles.resultDetailCol, { borderRightWidth: 0 }]}>
-              <Text style={[styles.resultDetailLabel, { color: theme.swim }]}>Subtotal ECOs</Text>
-              <Text style={[styles.resultDetailValue, { color: theme.swim, fontWeight: '900' }]}>{(activeDayData.natacion.ecos || 0).toFixed(2)}</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* ==================== 2. CICLISMO ==================== */}
-        <View style={styles.disciplineCard}>
-          <View style={[styles.cardAccentStripe, { backgroundColor: theme.bike }]} />
-          
-          <View style={styles.disciplineCardHeader}>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Ionicons name="bicycle" size={16} color={theme.bike} style={{ marginRight: 6 }} />
-              <Text style={[styles.disciplineTitle, { color: theme.bike }]}>Ciclismo</Text>
-            </View>
-          </View>
-
-          {/* Inputs Row */}
-          <View style={styles.inputsGrid}>
-            <View style={styles.inputCol}>
-              <Text style={styles.label}>Reps</Text>
-              <TextInput
-                style={[styles.formInput, focusedInput === 'cic-reps' ? styles.inputFocused : null]}
-                value={activeDayData.ciclismo.reps}
-                onChangeText={v => handleInputChange('ciclismo', 'reps', v)}
-                keyboardType="numeric"
-                onFocus={() => setFocusedInput('cic-reps')}
-                onBlur={() => setFocusedInput(null)}
-              />
-            </View>
-            <View style={styles.inputCol}>
-              <Text style={styles.label}>Minutos</Text>
-              <TextInput
-                style={[styles.formInput, focusedInput === 'cic-min' ? styles.inputFocused : null]}
-                value={activeDayData.ciclismo.minutos}
-                placeholder="0"
-                placeholderTextColor={theme.textMuted}
-                onChangeText={v => handleInputChange('ciclismo', 'minutos', v)}
-                keyboardType="numeric"
-                onFocus={() => setFocusedInput('cic-min')}
-                onBlur={() => setFocusedInput(null)}
-              />
-            </View>
-            <View style={styles.inputCol}>
-              <Text style={styles.label}>Segundos</Text>
-              <TextInput
-                style={[styles.formInput, focusedInput === 'cic-seg' ? styles.inputFocused : null]}
-                value={activeDayData.ciclismo.segundos}
-                placeholder="0"
-                placeholderTextColor={theme.textMuted}
-                onChangeText={v => handleInputChange('ciclismo', 'segundos', v)}
-                keyboardType="numeric"
-                onFocus={() => setFocusedInput('cic-seg')}
-                onBlur={() => setFocusedInput(null)}
-              />
-            </View>
-            <View style={styles.inputCol}>
-              <Text style={styles.label}>Zona</Text>
-              <View style={styles.selectWrapper}>
-                <TextInput
-                  style={[styles.formInput, { textAlign: 'center' }, focusedInput === 'cic-zona' ? styles.inputFocused : null]}
-                  value={activeDayData.ciclismo.zona}
-                  onChangeText={v => {
-                    const num = parseInt(v);
-                    if (!isNaN(num) && num >= 1 && num <= 8) {
-                      handleInputChange('ciclismo', 'zona', v);
-                    } else if (v === '') {
-                      handleInputChange('ciclismo', 'zona', '');
-                    }
-                  }}
-                  keyboardType="numeric"
-                  maxLength={1}
-                  onFocus={() => setFocusedInput('cic-zona')}
-                  onBlur={() => setFocusedInput(null)}
-                />
+              {/* Category Picker with Exact Multipliers */}
+              <Text style={[styles.label, { marginTop: 12 }]}>2. CATEGORÍA Y FACTOR</Text>
+              <View style={styles.categoriesList}>
+                {(STRENGTH_CATEGORIES[strType] || STRENGTH_CATEGORIES.levantamientos).map(cat => {
+                  const isSel = strCategory === cat.id;
+                  return (
+                    <TouchableOpacity
+                      key={cat.id}
+                      style={[styles.catCard, isSel && styles.catCardActive]}
+                      onPress={() => setStrCategory(cat.id)}
+                      activeOpacity={0.8}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.catName, isSel && { color: theme.primary, fontWeight: '900' }]}>{cat.name}</Text>
+                        <Text style={styles.catDesc}>{cat.desc}</Text>
+                      </View>
+                      <View style={[styles.catFactorBadge, isSel ? { backgroundColor: theme.primary } : null]}>
+                        <Text style={[styles.catFactorText, isSel ? { color: '#fff' } : null]}>x{cat.factor}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
-            </View>
-          </View>
 
-          {/* Results Summary Row */}
-          <View style={styles.resultDetailsBox}>
-            <View style={styles.resultDetailCol}>
-              <Text style={styles.resultDetailLabel}>Tiempo Total</Text>
-              <Text style={styles.resultDetailValue}>{(activeDayData.ciclismo.total || 0).toFixed(2)} min</Text>
-            </View>
-            <View style={styles.resultDetailCol}>
-              <Text style={styles.resultDetailLabel}>Coeficiente</Text>
-              <Text style={styles.resultDetailValue}>× {COEF[activeDayData.ciclismo.zona] || 1}</Text>
-            </View>
-            <View style={styles.resultDetailCol}>
-              <Text style={styles.resultDetailLabel}>Factor Deporte</Text>
-              <Text style={styles.resultDetailValue}>× 0.50</Text>
-            </View>
-            <View style={[styles.resultDetailCol, { borderRightWidth: 0 }]}>
-              <Text style={[styles.resultDetailLabel, { color: theme.bike }]}>Subtotal ECOs</Text>
-              <Text style={[styles.resultDetailValue, { color: theme.bike, fontWeight: '900' }]}>{(activeDayData.ciclismo.ecos || 0).toFixed(2)}</Text>
-            </View>
-          </View>
-        </View>
+              {/* Exercise Name */}
+              <Text style={[styles.label, { marginTop: 12 }]}>3. NOMBRE DEL EJERCICIO (OPCIONAL)</Text>
+              <TextInput
+                style={styles.textInput}
+                placeholder="Ej: Sentadilla, Press Banca, Salto al cajón..."
+                placeholderTextColor={theme.textMuted}
+                value={strName}
+                onChangeText={setStrName}
+              />
 
-        {/* ==================== 3. CARRERA ==================== */}
-        <View style={styles.disciplineCard}>
-          <View style={[styles.cardAccentStripe, { backgroundColor: theme.run }]} />
-          
-          <View style={styles.disciplineCardHeader}>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Ionicons name="flame" size={16} color={theme.run} style={{ marginRight: 6 }} />
-              <Text style={[styles.disciplineTitle, { color: theme.run }]}>Carrera</Text>
-            </View>
-            <TouchableOpacity 
-              activeOpacity={0.8} 
-              style={[styles.btnConvToggle, { borderColor: theme.run }]}
-              onPress={() => {
-                setShowConverterSport(showConverterSport === 'carrera' ? null : 'carrera');
-              }}
-            >
-              <Text style={{ fontSize: 9, fontWeight: '800', color: theme.run, textTransform: 'uppercase' }}>m → min</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Converter inline */}
-          {showConverterSport === 'carrera' && (
-            <View style={[styles.converterBox, { backgroundColor: theme.background, borderColor: theme.border }]}>
-              <Text style={styles.converterTitle}>Conversión: Metros a Minutos (Carrera)</Text>
-              <View style={styles.converterInputsRow}>
+              {/* Sets and Reps */}
+              <Text style={[styles.label, { marginTop: 12 }]}>4. SERIES Y REPETICIONES</Text>
+              <View style={{ flexDirection: 'row', gap: 10 }}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.label}>Distancia (Metros)</Text>
+                  <Text style={styles.inputMiniLabel}>Series:</Text>
                   <TextInput
-                    style={[styles.formInput, { backgroundColor: theme.surface }]}
-                    placeholder="Ej: 5000"
-                    placeholderTextColor={theme.textMuted}
-                    value={convDist}
-                    onChangeText={setConvDist}
+                    style={styles.textInput}
                     keyboardType="numeric"
+                    placeholder="4"
+                    placeholderTextColor={theme.textMuted}
+                    value={strSets}
+                    onChangeText={setStrSets}
                   />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.label}>Ritmo/100m (min, ej: 0.5)</Text>
+                  <Text style={styles.inputMiniLabel}>Reps por serie:</Text>
                   <TextInput
-                    style={[styles.formInput, { backgroundColor: theme.surface }]}
-                    placeholder="Ej: 0.45"
-                    placeholderTextColor={theme.textMuted}
-                    value={convRitmo}
-                    onChangeText={setConvRitmo}
+                    style={styles.textInput}
                     keyboardType="numeric"
+                    placeholder="8"
+                    placeholderTextColor={theme.textMuted}
+                    value={strReps}
+                    onChangeText={setStrReps}
                   />
                 </View>
               </View>
-              <TouchableOpacity activeOpacity={0.8} style={[styles.btnConvSubmit, { backgroundColor: theme.run }]} onPress={() => handleConvert('carrera')}>
-                <Text style={styles.btnConvSubmitText}>Calcular y Cargar</Text>
+
+              {/* Live Preview */}
+              {(() => {
+                const cats = STRENGTH_CATEGORIES[strType] || STRENGTH_CATEGORIES.levantamientos;
+                const activeCat = cats.find(c => c.id === parseInt(strCategory)) || cats[0];
+                const sets = parseFloat(strSets) || 0;
+                const reps = parseFloat(strReps) || 0;
+                const totR = strDirectReps ? parseFloat(strDirectReps) || 0 : sets * reps;
+                const previewEcos = totR * activeCat.factor;
+
+                return (
+                  <View style={styles.strengthPreviewBox}>
+                    <Text style={styles.strengthPreviewLabel}>CÁLCULO RESULTANTE:</Text>
+                    <Text style={styles.strengthPreviewVal}>
+                      {totR} reps × {activeCat.factor} = <Text style={{ color: '#8b5cf6', fontWeight: '900' }}>{previewEcos.toFixed(2)} ECOs</Text>
+                    </Text>
+                  </View>
+                );
+              })()}
+
+            </ScrollView>
+
+            <View style={styles.modalActionsRow}>
+              <TouchableOpacity style={styles.btnCancel} onPress={() => setShowAddStrengthModal(false)} activeOpacity={0.7}>
+                <Text style={styles.btnCancelText}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.btnSave, { backgroundColor: '#8b5cf6' }]} onPress={handleAddStrengthExercise} activeOpacity={0.8}>
+                <Ionicons name="checkmark-sharp" size={16} color="#fff" style={{ marginRight: 6 }} />
+                <Text style={styles.btnSaveText}>Añadir Ejercicio</Text>
               </TouchableOpacity>
             </View>
-          )}
+          </View>
+        </View>
+      </Modal>
 
-          {/* Inputs Row */}
-          <View style={styles.inputsGrid}>
-            <View style={styles.inputCol}>
-              <Text style={styles.label}>Reps</Text>
-              <TextInput
-                style={[styles.formInput, focusedInput === 'car-reps' ? styles.inputFocused : null]}
-                value={activeDayData.carrera.reps}
-                onChangeText={v => handleInputChange('carrera', 'reps', v)}
-                keyboardType="numeric"
-                onFocus={() => setFocusedInput('car-reps')}
-                onBlur={() => setFocusedInput(null)}
-              />
+      {/* MODAL: PACE CONVERTER */}
+      <Modal visible={!!showConverterSport} transparent animationType="fade" onRequestClose={() => setShowConverterSport(null)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Calculadora de Ritmo a Minutos</Text>
+              <TouchableOpacity onPress={() => setShowConverterSport(null)} activeOpacity={0.7}>
+                <Ionicons name="close" size={22} color={theme.textSecondary} />
+              </TouchableOpacity>
             </View>
-            <View style={styles.inputCol}>
-              <Text style={styles.label}>Minutos</Text>
-              <TextInput
-                style={[styles.formInput, focusedInput === 'car-min' ? styles.inputFocused : null]}
-                value={activeDayData.carrera.minutos}
-                placeholder="0"
-                placeholderTextColor={theme.textMuted}
-                onChangeText={v => handleInputChange('carrera', 'minutos', v)}
-                keyboardType="numeric"
-                onFocus={() => setFocusedInput('car-min')}
-                onBlur={() => setFocusedInput(null)}
-              />
-            </View>
-            <View style={styles.inputCol}>
-              <Text style={styles.label}>Segundos</Text>
-              <TextInput
-                style={[styles.formInput, focusedInput === 'car-seg' ? styles.inputFocused : null]}
-                value={activeDayData.carrera.segundos}
-                placeholder="0"
-                placeholderTextColor={theme.textMuted}
-                onChangeText={v => handleInputChange('carrera', 'segundos', v)}
-                keyboardType="numeric"
-                onFocus={() => setFocusedInput('car-seg')}
-                onBlur={() => setFocusedInput(null)}
-              />
-            </View>
-            <View style={styles.inputCol}>
-              <Text style={styles.label}>Zona</Text>
-              <View style={styles.selectWrapper}>
+
+            <View style={{ gap: 12 }}>
+              <View>
+                <Text style={styles.label}>DISTANCIA TOTAL (METROS):</Text>
                 <TextInput
-                  style={[styles.formInput, { textAlign: 'center' }, focusedInput === 'car-zona' ? styles.inputFocused : null]}
-                  value={activeDayData.carrera.zona}
-                  onChangeText={v => {
-                    const num = parseInt(v);
-                    if (!isNaN(num) && num >= 1 && num <= 8) {
-                      handleInputChange('carrera', 'zona', v);
-                    } else if (v === '') {
-                      handleInputChange('carrera', 'zona', '');
-                    }
-                  }}
+                  style={styles.textInput}
                   keyboardType="numeric"
-                  maxLength={1}
-                  onFocus={() => setFocusedInput('car-zona')}
-                  onBlur={() => setFocusedInput(null)}
+                  placeholder="Ej: 2000"
+                  placeholderTextColor={theme.textMuted}
+                  value={convDist}
+                  onChangeText={setConvDist}
                 />
               </View>
-            </View>
-          </View>
 
-          {/* Results Summary Row */}
-          <View style={styles.resultDetailsBox}>
-            <View style={styles.resultDetailCol}>
-              <Text style={styles.resultDetailLabel}>Tiempo Total</Text>
-              <Text style={styles.resultDetailValue}>{(activeDayData.carrera.total || 0).toFixed(2)} min</Text>
-            </View>
-            <View style={styles.resultDetailCol}>
-              <Text style={styles.resultDetailLabel}>Coeficiente</Text>
-              <Text style={styles.resultDetailValue}>× {COEF[activeDayData.carrera.zona] || 1}</Text>
-            </View>
-            <View style={styles.resultDetailCol}>
-              <Text style={styles.resultDetailLabel}>Factor Deporte</Text>
-              <Text style={styles.resultDetailValue}>× 1.00</Text>
-            </View>
-            <View style={[styles.resultDetailCol, { borderRightWidth: 0 }]}>
-              <Text style={[styles.resultDetailLabel, { color: theme.run }]}>Subtotal ECOs</Text>
-              <Text style={[styles.resultDetailValue, { color: theme.run, fontWeight: '900' }]}>{(activeDayData.carrera.ecos || 0).toFixed(2)}</Text>
+              <View>
+                <Text style={styles.label}>RITMO POR 100M (MINUTOS DECIMALES):</Text>
+                <TextInput
+                  style={styles.textInput}
+                  keyboardType="numeric"
+                  placeholder="Ej: 1.75 (1m 45s)"
+                  placeholderTextColor={theme.textMuted}
+                  value={convRitmo}
+                  onChangeText={setConvRitmo}
+                />
+              </View>
+
+              <View>
+                <Text style={styles.label}>ASIGNAR A ZONA:</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
+                  {ZONES_INFO.map(z => (
+                    <TouchableOpacity
+                      key={z.id}
+                      style={[styles.zonePillSmall, convTargetZone === String(z.id) ? { backgroundColor: z.color, borderColor: z.color } : null]}
+                      onPress={() => setConvTargetZone(String(z.id))}
+                    >
+                      <Text style={[styles.zonePillSmallText, convTargetZone === String(z.id) ? { color: '#fff' } : null]}>{z.name}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+
+              <View style={styles.modalActionsRow}>
+                <TouchableOpacity style={styles.btnCancel} onPress={() => setShowConverterSport(null)}>
+                  <Text style={styles.btnCancelText}>Cancelar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.btnSave} onPress={() => handleConvertAndApply(showConverterSport)}>
+                  <Text style={styles.btnSaveText}>Aplicar Minutos</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         </View>
-      </View>
+      </Modal>
 
-      {/* Day total display box */}
-      <View style={[styles.daySummaryBox, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <Ionicons name="flash" size={18} color={theme.primary} style={{ marginRight: 6 }} />
-          <Text style={[styles.daySummaryText, { color: theme.textSecondary }]}>Total ECOs de {activeDay}</Text>
-        </View>
-        <Text style={[styles.daySummaryTotalText, { color: theme.text }]}>
-          {totalsByDay[activeDay].total.toFixed(2)} <Text style={{ fontSize: 12, color: theme.textSecondary, fontWeight: '600' }}>ECOs / Día</Text>
-        </Text>
-      </View>
-
-      {/* Action Buttons */}
-      <View style={styles.actionsContainer}>
-        <TouchableOpacity activeOpacity={0.85} style={[styles.btn, { backgroundColor: theme.primary }]} onPress={handleSaveEcosWeekly}>
-          <Ionicons name="save" size={18} color="#fff" style={{ marginRight: 6 }} />
-          <Text style={styles.btnText}>Guardar ECOs de la Semana</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity activeOpacity={0.85} style={[styles.btn, { backgroundColor: theme.surfaceSecondary, borderWidth: 1, borderColor: theme.border }]} onPress={handleWipeEcosWeekly}>
-          <Ionicons name="trash-outline" size={18} color={theme.error} style={{ marginRight: 6 }} />
-          <Text style={[styles.btnText, { color: theme.textSecondary }]}>Limpiar inputs semanales</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Weekly History Section */}
-      <Text style={styles.sectionTitle}>Historial de Carga Semanal</Text>
-      <View style={[styles.card, { marginBottom: 30 }]}>
-        {selectedAthlete && selectedAthlete.ecosHistory && selectedAthlete.ecosHistory.length > 0 ? (
-          selectedAthlete.ecosHistory.map((item, idx) => (
-            <View 
-              key={item.id || idx} 
-              style={[
-                { flexDirection: 'row', alignItems: 'center', paddingVertical: 12 },
-                idx < selectedAthlete.ecosHistory.length - 1 ? { borderBottomWidth: 1, borderBottomColor: theme.border } : null
-              ]}
-            >
-              <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 13, fontWeight: '700', color: theme.text }}>
-                  Semana: {item.semanaFecha}
-                </Text>
-                <Text style={{ fontSize: 11, color: theme.textSecondary, marginTop: 4 }}>
-                  🏊 {Math.round(item.totals.nat)} • 🚴 {Math.round(item.totals.cic)} • 🏃 {Math.round(item.totals.car)}
-                </Text>
-              </View>
-              <View style={{ alignItems: 'flex-end', marginRight: 12 }}>
-                <Text style={{ fontSize: 14, fontWeight: '900', color: theme.primary }}>
-                  {item.totals.total.toFixed(1)}
-                </Text>
-                <Text style={{ fontSize: 9, color: theme.textMuted, marginTop: 2, fontWeight: '600' }}>
-                  ECOs
-                </Text>
-              </View>
-              <TouchableOpacity
-                activeOpacity={0.75}
-                style={{
-                  backgroundColor: 'rgba(37, 211, 102, 0.12)',
-                  borderWidth: 1,
-                  borderColor: '#25D366',
-                  padding: 8,
-                  borderRadius: 10
-                }}
-                onPress={() => handleShareEcos(item, selectedAthlete.nombre)}
-              >
-                <Ionicons name="logo-whatsapp" size={16} color="#25D366" />
-              </TouchableOpacity>
-            </View>
-          ))
-        ) : (
-          <Text style={{ textAlign: 'center', color: theme.textMuted, fontSize: 12, paddingVertical: 12, fontWeight: '600' }}>
-            No hay registros de cargas semanales en el historial.
-          </Text>
-        )}
-      </View>
     </ScrollView>
   );
 }
 
-const getStyles = (theme) => StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: theme.background,
-    padding: 16,
-  },
-  contentContainer: {
-    paddingBottom: 40,
-  },
-  emptyContainer: {
-    flex: 1,
-    backgroundColor: theme.background,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 32,
-  },
-  emptyText: {
-    fontSize: 14,
-    textAlign: 'center',
-    marginTop: 12,
-    lineHeight: 22,
-    fontWeight: '600',
-  },
-  sectionTitle: {
-    fontSize: 12,
-    fontWeight: '900',
-    color: theme.primary,
-    textTransform: 'uppercase',
-    borderLeftWidth: 3,
-    borderLeftColor: theme.primary,
-    paddingLeft: 8,
-    marginTop: 22,
-    marginBottom: 12,
-    letterSpacing: 0.8,
-  },
-  card: {
-    backgroundColor: theme.surface,
-    borderWidth: 1,
-    borderColor: theme.border,
-    borderRadius: 20,
-    padding: 16,
-    marginBottom: 12,
-    shadowColor: theme.shadowColor,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: theme.shadowOpacity,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  selectorCard: {
-    backgroundColor: theme.surface,
-    borderWidth: 1,
-    borderColor: theme.border,
-    borderRadius: 20,
-    padding: 12,
-    marginBottom: 12,
-    shadowColor: theme.shadowColor,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: theme.shadowOpacity,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  athleteScroller: {
-    gap: 8,
-    paddingVertical: 4,
-  },
-  athleteBubble: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    backgroundColor: theme.surfaceSecondary,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: theme.border,
-  },
-  athleteBubbleText: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  weeklyHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  weeklyTotalText: {
-    fontSize: 26,
-    fontWeight: '900',
-    color: theme.text,
-  },
-  sportsLegend: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  legendItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  legendDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  legendText: {
-    fontSize: 10,
-    fontWeight: '800',
-  },
-  chartContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-end',
-    height: 120,
-    paddingTop: 10,
-  },
-  chartColWrapper: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  chartColContainer: {
-    height: 80,
-    width: 14,
-    marginBottom: 4,
-  },
-  chartColTrack: {
-    flex: 1,
-    width: '100%',
-    backgroundColor: theme.surfaceSecondary,
-    borderRadius: 7,
-    overflow: 'hidden',
-    justifyContent: 'flex-end',
-  },
-  barStackSpacer: {
-    flex: 1,
-  },
-  barStackSwim: {
-    width: '100%',
-  },
-  barStackBike: {
-    width: '100%',
-  },
-  barStackRun: {
-    width: '100%',
-  },
-  chartLabel: {
-    fontSize: 9,
-    fontWeight: '700',
-  },
-  chartValueLabel: {
-    fontSize: 8,
-    fontWeight: '500',
-    color: theme.textMuted,
-    marginTop: 1,
-  },
-  daySelectorRow: {
-    gap: 6,
-    marginBottom: 14,
-    paddingVertical: 4,
-  },
-  dayTab: {
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 20,
-    borderWidth: 1,
-  },
-  dayTabText: {
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  disciplineCardsContainer: {
-    gap: 12,
-  },
-  disciplineCard: {
-    backgroundColor: theme.surface,
-    borderWidth: 1,
-    borderColor: theme.border,
-    borderRadius: 20,
-    position: 'relative',
-    overflow: 'hidden',
-    padding: 16,
-    shadowColor: theme.shadowColor,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: theme.shadowOpacity,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  cardAccentStripe: {
-    position: 'absolute',
-    left: 0,
-    top: 0,
-    bottom: 0,
-    width: 4,
-  },
-  stripeSwim: { backgroundColor: theme.swim },
-  stripeBike: { backgroundColor: theme.bike },
-  stripeRun: { backgroundColor: theme.run },
-  disciplineCardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 14,
-  },
-  disciplineTitle: {
-    fontSize: 13,
-    fontWeight: '850',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  btnConvToggle: {
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-  },
-  converterBox: {
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 14,
-  },
-  converterTitle: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: theme.primary,
-    marginBottom: 8,
-    textTransform: 'uppercase',
-  },
-  converterInputsRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  btnConvSubmit: {
-    height: 36,
-    borderRadius: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 10,
-  },
-  btnConvSubmitText: {
-    color: '#fff',
-    fontWeight: '800',
-    fontSize: 11,
-    textTransform: 'uppercase',
-  },
-  inputsGrid: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  inputCol: {
-    flex: 1,
-  },
-  label: {
-    fontSize: 9,
-    color: theme.textSecondary,
-    textTransform: 'uppercase',
-    marginBottom: 5,
-    letterSpacing: 0.5,
-    fontWeight: '700',
-  },
-  formInput: {
-    borderWidth: 1,
-    borderColor: theme.border,
-    color: theme.text,
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    height: 38,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  inputFocused: {
-    borderColor: theme.primary,
-    backgroundColor: theme.surfaceSecondary,
-  },
-  selectWrapper: {
-    justifyContent: 'center',
-  },
-  resultDetailsBox: {
-    flexDirection: 'row',
-    borderTopWidth: 1,
-    borderTopColor: theme.border,
-    paddingTop: 10,
-    marginTop: 12,
-  },
-  resultDetailCol: {
-    flex: 1,
-    alignItems: 'center',
-    borderRightWidth: 1,
-    borderRightColor: theme.border,
-  },
-  resultDetailLabel: {
-    fontSize: 8,
-    color: theme.textMuted,
-    textTransform: 'uppercase',
-    fontWeight: '600',
-  },
-  resultDetailValue: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: theme.text,
-    marginTop: 2,
-  },
-  daySummaryBox: {
-    borderWidth: 1,
-    padding: 16,
-    borderRadius: 20,
-    marginTop: 16,
-    alignItems: 'center',
-    shadowColor: theme.shadowColor,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: theme.shadowOpacity,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  daySummaryText: {
-    fontSize: 10,
-    fontWeight: '800',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  daySummaryTotalText: {
-    fontSize: 22,
-    fontWeight: '900',
-    marginTop: 6,
-  },
-  actionsContainer: {
-    gap: 10,
-    marginTop: 20,
-  },
-  btn: {
-    flexDirection: 'row',
-    height: 50,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  btnText: {
-    color: '#fff',
-    fontWeight: '850',
-    fontSize: 12,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-});
+const getStyles = (theme) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.background,
+    },
+    contentContainer: {
+      paddingHorizontal: 16,
+      paddingTop: 10,
+      paddingBottom: 40,
+    },
+    center: {
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 40,
+    },
+    emptyText: {
+      marginTop: 12,
+      fontSize: 15,
+      color: theme.textSecondary,
+      fontWeight: '700',
+    },
+    selectorCard: {
+      backgroundColor: theme.surface,
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderRadius: 20,
+      padding: 14,
+      marginBottom: 12,
+      shadowColor: theme.shadowColor,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: theme.shadowOpacity,
+      shadowRadius: 8,
+      elevation: 2,
+    },
+    label: {
+      fontSize: 9.5,
+      fontWeight: '800',
+      color: theme.textSecondary,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+      marginBottom: 6,
+    },
+    targetBadge: {
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: 8,
+      borderWidth: 1,
+    },
+    targetBadgeText: {
+      fontSize: 10,
+      fontWeight: '800',
+    },
+    scroller: {
+      gap: 8,
+      paddingVertical: 4,
+    },
+    bubble: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: theme.surfaceSecondary,
+      borderWidth: 1,
+      borderColor: theme.border,
+      paddingVertical: 8,
+      paddingHorizontal: 14,
+      borderRadius: 12,
+    },
+    bubbleText: {
+      fontSize: 12.5,
+      fontWeight: '700',
+    },
+    card: {
+      backgroundColor: theme.surface,
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderRadius: 20,
+      padding: 14,
+      marginBottom: 12,
+      shadowColor: theme.shadowColor,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: theme.shadowOpacity,
+      shadowRadius: 8,
+      elevation: 2,
+    },
+    daysScroll: {
+      flexDirection: 'row',
+      gap: 6,
+    },
+    dayPill: {
+      flex: 1,
+      minWidth: 44,
+      backgroundColor: theme.surfaceSecondary,
+      borderWidth: 1,
+      borderColor: theme.border,
+      paddingVertical: 8,
+      borderRadius: 12,
+      alignItems: 'center',
+    },
+    dayPillActive: {
+      backgroundColor: theme.primary,
+      borderColor: theme.primary,
+    },
+    dayPillText: {
+      fontSize: 11,
+      fontWeight: '800',
+      color: theme.textSecondary,
+    },
+    dayPillTextActive: {
+      color: '#fff',
+    },
+    dayPillEcos: {
+      fontSize: 9.5,
+      fontWeight: '900',
+      marginTop: 2,
+    },
+    sportTabsRow: {
+      flexDirection: 'row',
+      gap: 6,
+      marginBottom: 12,
+    },
+    sportTab: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.surface,
+      borderWidth: 1,
+      borderColor: theme.border,
+      paddingVertical: 10,
+      borderRadius: 14,
+    },
+    sportTabText: {
+      fontSize: 11,
+      fontWeight: '800',
+      color: theme.textSecondary,
+    },
+    sportCardHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 12,
+    },
+    cardTitle: {
+      fontSize: 13,
+      fontWeight: '900',
+      color: theme.text,
+      letterSpacing: 0.4,
+    },
+    cardSubtitle: {
+      fontSize: 11,
+      color: theme.textSecondary,
+      marginTop: 2,
+    },
+    converterQuickBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: theme.surfaceSecondary,
+      borderWidth: 1,
+      borderColor: theme.primary,
+      paddingHorizontal: 8,
+      paddingVertical: 5,
+      borderRadius: 8,
+    },
+    converterQuickBtnText: {
+      fontSize: 10.5,
+      fontWeight: '800',
+      color: theme.primary,
+    },
+    zonesTable: {
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderRadius: 14,
+      overflow: 'hidden',
+      marginBottom: 12,
+    },
+    zonesTableHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: theme.surfaceSecondary,
+      paddingVertical: 8,
+      paddingHorizontal: 10,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+    },
+    zonesTh: {
+      fontSize: 9.5,
+      fontWeight: '800',
+      color: theme.textSecondary,
+      textTransform: 'uppercase',
+    },
+    zoneRowItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 7,
+      paddingHorizontal: 10,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+    },
+    zoneBadge: {
+      flex: 1.2,
+      borderWidth: 1,
+      paddingVertical: 3,
+      paddingHorizontal: 6,
+      borderRadius: 6,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: 6,
+    },
+    zoneBadgeText: {
+      fontSize: 10.5,
+      fontWeight: '900',
+    },
+    zoneDescText: {
+      flex: 1.8,
+      fontSize: 10,
+      color: theme.textSecondary,
+      fontWeight: '600',
+    },
+    zoneCoefText: {
+      flex: 0.8,
+      fontSize: 10,
+      fontWeight: '800',
+      color: theme.textMuted,
+      textAlign: 'center',
+    },
+    zoneInputWrap: {
+      flex: 1.4,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    zoneMinInput: {
+      backgroundColor: theme.surfaceSecondary,
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderRadius: 8,
+      width: 44,
+      height: 30,
+      textAlign: 'center',
+      fontSize: 12,
+      fontWeight: '800',
+      color: theme.text,
+      paddingVertical: 2,
+    },
+    minUnitText: {
+      fontSize: 10,
+      color: theme.textMuted,
+      marginLeft: 3,
+      fontWeight: '700',
+    },
+    zoneEcosVal: {
+      flex: 1.1,
+      fontSize: 12,
+      textAlign: 'right',
+      fontWeight: '700',
+    },
+    sportSubtotalRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingTop: 8,
+      borderTopWidth: 1,
+      borderTopColor: theme.border,
+    },
+    subtotalLabel: {
+      fontSize: 12,
+      fontWeight: '800',
+      color: theme.text,
+    },
+    subtotalMinText: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: theme.textSecondary,
+    },
+    subtotalBadge: {
+      borderWidth: 1,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 8,
+    },
+    subtotalBadgeText: {
+      fontSize: 12,
+      fontWeight: '900',
+    },
+    btnActionSmall: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 5,
+      paddingHorizontal: 10,
+      borderRadius: 8,
+      borderWidth: 1,
+    },
+    btnActionSmallText: {
+      fontSize: 11,
+      fontWeight: '800',
+    },
+    strengthList: {
+      gap: 8,
+      marginBottom: 12,
+    },
+    strengthItemCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: theme.surfaceSecondary,
+      borderRadius: 12,
+      padding: 10,
+      borderWidth: 1,
+      borderColor: theme.border,
+    },
+    strengthItemName: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: theme.text,
+    },
+    strengthCatBadge: {
+      borderWidth: 1,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: 6,
+    },
+    strengthCatBadgeText: {
+      fontSize: 9.5,
+      fontWeight: '800',
+    },
+    strengthItemDetails: {
+      fontSize: 11,
+      color: theme.textSecondary,
+      marginTop: 2,
+    },
+    strengthItemEcos: {
+      fontSize: 13,
+      fontWeight: '900',
+    },
+    deleteMiniBtn: {
+      padding: 4,
+      marginTop: 4,
+    },
+    emptyBox: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 24,
+      gap: 6,
+    },
+    emptyBoxText: {
+      fontSize: 11.5,
+      color: theme.textMuted,
+    },
+    btnAddQuickStrength: {
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+      borderRadius: 10,
+      marginTop: 6,
+    },
+    btnAddQuickStrengthText: {
+      color: '#fff',
+      fontSize: 11.5,
+      fontWeight: '800',
+    },
+    totalDayBadge: {
+      paddingVertical: 6,
+      paddingHorizontal: 12,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    totalDayBadgeVal: {
+      color: '#fff',
+      fontSize: 16,
+      fontWeight: '900',
+      lineHeight: 18,
+    },
+    totalDayBadgeLbl: {
+      color: 'rgba(255,255,255,0.85)',
+      fontSize: 8.5,
+      fontWeight: '800',
+      textTransform: 'uppercase',
+    },
+    weeklyTableWrap: {
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderRadius: 12,
+      overflow: 'hidden',
+      marginBottom: 14,
+    },
+    weeklyRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 9,
+      paddingHorizontal: 10,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+    },
+    weeklyRowDay: {
+      flex: 1.5,
+      fontSize: 12,
+      fontWeight: '700',
+      color: theme.text,
+    },
+    weeklyRowSport: {
+      flex: 1,
+      fontSize: 11,
+      fontWeight: '800',
+      textAlign: 'center',
+    },
+    weeklyRowTotal: {
+      flex: 1.2,
+      fontSize: 12.5,
+      fontWeight: '900',
+      textAlign: 'right',
+    },
+    actionsRow: {
+      flexDirection: 'row',
+      gap: 10,
+    },
+    btnSaveWeekly: {
+      flex: 1.3,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.success,
+      paddingVertical: 12,
+      borderRadius: 14,
+      elevation: 2,
+    },
+    btnSaveWeeklyText: {
+      color: '#fff',
+      fontSize: 12.5,
+      fontWeight: '900',
+    },
+    btnExportPdf: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.primary,
+      paddingVertical: 12,
+      borderRadius: 14,
+      elevation: 2,
+    },
+    btnExportPdfText: {
+      color: '#fff',
+      fontSize: 12.5,
+      fontWeight: '900',
+    },
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.6)',
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 16,
+    },
+    modalContent: {
+      backgroundColor: theme.surface,
+      borderRadius: 22,
+      padding: 18,
+      width: '100%',
+      maxWidth: 440,
+      borderWidth: 1,
+      borderColor: theme.border,
+      elevation: 6,
+    },
+    modalHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 14,
+      paddingBottom: 10,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+    },
+    modalTitle: {
+      fontSize: 14,
+      fontWeight: '900',
+      color: theme.text,
+    },
+    typeSelectorRow: {
+      flexDirection: 'row',
+      gap: 8,
+      marginBottom: 6,
+    },
+    typeBtn: {
+      flex: 1,
+      backgroundColor: theme.surfaceSecondary,
+      borderWidth: 1,
+      borderColor: theme.border,
+      paddingVertical: 9,
+      borderRadius: 10,
+      alignItems: 'center',
+    },
+    typeBtnActive: {
+      backgroundColor: '#8b5cf6',
+      borderColor: '#8b5cf6',
+    },
+    typeBtnText: {
+      fontSize: 10.5,
+      fontWeight: '700',
+      color: theme.textSecondary,
+    },
+    typeBtnTextActive: {
+      color: '#fff',
+      fontWeight: '900',
+    },
+    categoriesList: {
+      gap: 6,
+      marginBottom: 6,
+    },
+    catCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: theme.surfaceSecondary,
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderRadius: 10,
+      padding: 8,
+    },
+    catCardActive: {
+      borderColor: theme.primary,
+      backgroundColor: theme.primary + '12',
+    },
+    catName: {
+      fontSize: 11.5,
+      fontWeight: '800',
+      color: theme.text,
+    },
+    catDesc: {
+      fontSize: 9.5,
+      color: theme.textSecondary,
+      marginTop: 1,
+    },
+    catFactorBadge: {
+      backgroundColor: theme.surface,
+      borderWidth: 1,
+      borderColor: theme.border,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 6,
+      marginLeft: 8,
+    },
+    catFactorText: {
+      fontSize: 11,
+      fontWeight: '900',
+      color: theme.text,
+    },
+    textInput: {
+      backgroundColor: theme.surfaceSecondary,
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderRadius: 10,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      fontSize: 13,
+      color: theme.text,
+      fontWeight: '600',
+    },
+    inputMiniLabel: {
+      fontSize: 10,
+      fontWeight: '700',
+      color: theme.textSecondary,
+      marginBottom: 3,
+    },
+    strengthPreviewBox: {
+      backgroundColor: '#8b5cf6' + '12',
+      borderWidth: 1,
+      borderColor: '#8b5cf6' + '40',
+      borderRadius: 10,
+      padding: 10,
+      marginTop: 14,
+      alignItems: 'center',
+    },
+    strengthPreviewLabel: {
+      fontSize: 9,
+      fontWeight: '800',
+      color: '#8b5cf6',
+      letterSpacing: 0.5,
+      marginBottom: 2,
+    },
+    strengthPreviewVal: {
+      fontSize: 13,
+      fontWeight: '700',
+      color: theme.text,
+    },
+    modalActionsRow: {
+      flexDirection: 'row',
+      gap: 10,
+      marginTop: 16,
+      paddingTop: 12,
+      borderTopWidth: 1,
+      borderTopColor: theme.border,
+    },
+    btnCancel: {
+      flex: 1,
+      paddingVertical: 11,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.surfaceSecondary,
+      borderWidth: 1,
+      borderColor: theme.border,
+    },
+    btnCancelText: {
+      fontSize: 12.5,
+      fontWeight: '800',
+      color: theme.textSecondary,
+    },
+    btnSave: {
+      flex: 1.3,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.primary,
+      paddingVertical: 11,
+      borderRadius: 12,
+    },
+    btnSaveText: {
+      fontSize: 12.5,
+      fontWeight: '900',
+      color: '#fff',
+    },
+    zonePillSmall: {
+      borderWidth: 1,
+      borderColor: theme.border,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 8,
+      backgroundColor: theme.surfaceSecondary,
+    },
+    zonePillSmallText: {
+      fontSize: 11,
+      fontWeight: '800',
+      color: theme.textSecondary,
+    },
+  });

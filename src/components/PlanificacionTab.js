@@ -20,6 +20,8 @@ const DEFAULT_MESO_PCT = {
   car: [95, 85, 75, 100, 100, 100, 100, 100, 100, 100, 100, 100]
 };
 
+const DEFAULT_PERIODOS = ['General', 'Específico', 'Competitivo', 'Competitivo', 'General', 'Específico', 'Competitivo', 'Competitivo', 'General', 'Específico', 'Competitivo', 'Competitivo'];
+
 function formatHours(totalMinutes) {
   if (isNaN(totalMinutes) || totalMinutes <= 0) return "00:00:00";
   let hours = Math.floor(totalMinutes / 60);
@@ -83,6 +85,7 @@ export default function PlanificacionTab({ atletas, onSavePlan, onDeletePlan, on
   const [showCompForm, setShowCompForm] = useState(false);
 
   const [mesosPct, setMesosPct] = useState(DEFAULT_MESO_PCT);
+  const [mesosPeriodos, setMesosPeriodos] = useState(['General', 'Específico', 'Competitivo']);
   const [zonasSemanales, setZonasSemanales] = useState({ nat: [], cic: [], car: [] });
   const [calcCache, setCalcCache] = useState(null);
   const [showWeeksList, setShowWeeksList] = useState(false);
@@ -117,6 +120,8 @@ export default function PlanificacionTab({ atletas, onSavePlan, onDeletePlan, on
     }
   };
 
+  const selectedAthlete = (atletas || []).find(a => a.id === selectedAtletaId) || null;
+
   const loadAthletePlan = (athlete) => {
     setSelectedAtletaId(athlete.id);
     setNombreDeportista(athlete.nombre);
@@ -130,7 +135,8 @@ export default function PlanificacionTab({ atletas, onSavePlan, onDeletePlan, on
       setFechaInicio(`${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`);
     }
 
-    setMesociclos(plan.mesos ? plan.mesos.toString() : '3');
+    const numMeso = plan.mesos || 3;
+    setMesociclos(numMeso.toString());
     setBaseNatacion(plan.baseNat ? plan.baseNat.toString() : '6000');
     setBaseCiclismo(plan.baseCic ? plan.baseCic.toString() : '5');
     setBaseCarrera(plan.baseCar ? plan.baseCar.toString() : '4');
@@ -142,11 +148,11 @@ export default function PlanificacionTab({ atletas, onSavePlan, onDeletePlan, on
 
     setCompetencias(plan.competencias || []);
     setMesosPct(plan.mesosPct || DEFAULT_MESO_PCT);
+    setMesosPeriodos(plan.mesosPeriodos || DEFAULT_PERIODOS.slice(0, numMeso));
     setFeedback(plan.feedback || '');
     setShowCompetenciasInReport(plan.showCompetenciasInReport !== false);
     setShowFeedbackInReport(plan.showFeedbackInReport !== false);
 
-    const numMeso = plan.mesos || 3;
     const totalWeeks = numMeso * 4;
     
     let loadedZonas = plan.zonasSemanales || { nat: [], cic: [], car: [] };
@@ -190,6 +196,16 @@ export default function PlanificacionTab({ atletas, onSavePlan, onDeletePlan, on
       };
     });
 
+    setMesosPeriodos(prev => {
+      const updated = [...prev];
+      for (let i = 0; i < numMesos; i++) {
+        if (!updated[i]) {
+          updated[i] = i === 0 ? 'General' : i === numMesos - 1 ? 'Competitivo' : 'Específico';
+        }
+      }
+      return updated.slice(0, numMesos);
+    });
+
     if (activeZoneWeekIndex >= totalWeeks) {
       setActiveZoneWeekIndex(totalWeeks - 1 >= 0 ? totalWeeks - 1 : 0);
     }
@@ -207,7 +223,6 @@ export default function PlanificacionTab({ atletas, onSavePlan, onDeletePlan, on
       const updatedSportArray = [...prev[sport]];
       const currentVal = updatedSportArray[weekIndex] || 'Z2';
       
-      // Parse active zones
       let activeZones = currentVal.split(/[\s,/\-+]+/g).map(z => z.trim()).filter(z => z.startsWith('Z'));
       
       if (activeZones.includes(clickedZone)) {
@@ -218,7 +233,6 @@ export default function PlanificacionTab({ atletas, onSavePlan, onDeletePlan, on
         activeZones.push(clickedZone);
       }
       
-      // Sort zones (Z1, Z2, Z3...)
       activeZones.sort((a, b) => {
         const numA = parseInt(a.substring(1)) || 1;
         const numB = parseInt(b.substring(1)) || 1;
@@ -234,7 +248,6 @@ export default function PlanificacionTab({ atletas, onSavePlan, onDeletePlan, on
       };
     });
 
-    // Sync calcCache immediately for real-time UI updates
     setCalcCache(prev => {
       if (!prev) return null;
       const updatedZ = {
@@ -285,6 +298,14 @@ export default function PlanificacionTab({ atletas, onSavePlan, onDeletePlan, on
     });
   };
 
+  const setMesoPeriodValue = (mesoIndex, period) => {
+    setMesosPeriodos(prev => {
+      const updated = [...prev];
+      updated[mesoIndex] = period;
+      return updated;
+    });
+  };
+
   const handleAddComp = () => {
     if (!newCompNombre.trim()) {
       Alert.alert('Error', 'Ingresa el nombre de la competencia.');
@@ -322,6 +343,7 @@ export default function PlanificacionTab({ atletas, onSavePlan, onDeletePlan, on
         distSem4: parseFloat(distSem4),
         competencias,
         mesosPct,
+        mesosPeriodos,
         zonasSemanales
       };
 
@@ -352,162 +374,182 @@ export default function PlanificacionTab({ atletas, onSavePlan, onDeletePlan, on
 
       let pools = { nat: 0, cic: 0, car: 0 };
       for (let m = 0; m < numMesos; m++) {
-        pools.nat += planSource.mesosPct.nat[m] !== undefined ? planSource.mesosPct.nat[m] : 100;
-        pools.cic += planSource.mesosPct.cic[m] !== undefined ? planSource.mesosPct.cic[m] : 100;
-        pools.car += planSource.mesosPct.car[m] !== undefined ? planSource.mesosPct.car[m] : 100;
+        pools.nat += (planSource.mesosPct && planSource.mesosPct.nat && planSource.mesosPct.nat[m] !== undefined) ? planSource.mesosPct.nat[m] : 100;
+        pools.cic += (planSource.mesosPct && planSource.mesosPct.cic && planSource.mesosPct.cic[m] !== undefined) ? planSource.mesosPct.cic[m] : 100;
+        pools.car += (planSource.mesosPct && planSource.mesosPct.car && planSource.mesosPct.car[m] !== undefined) ? planSource.mesosPct.car[m] : 100;
       }
-
       if (pools.nat === 0) pools.nat = 1;
       if (pools.cic === 0) pools.cic = 1;
       if (pools.car === 0) pools.car = 1;
 
-      let fileNatMts = [];
-      let fileCicMin = [];
-      let fileCarMin = [];
-      let colDates = [];
-
-      let sumNat = 0, sumCic = 0, sumCar = 0;
+      const calculatedNat = [];
+      const calculatedCic = [];
+      const calculatedCar = [];
+      const fechasColumnas = [];
 
       for (let s = 1; s <= totalWeeks; s++) {
         const mIdx = Math.ceil(s / 4) - 1;
         const weekFactor = weeklyDistributionArr[(s - 1) % 4];
 
-        const mesoNat = planSource.mesosPct.nat[mIdx] !== undefined ? planSource.mesosPct.nat[mIdx] : 100;
-        const mesoCic = planSource.mesosPct.cic[mIdx] !== undefined ? planSource.mesosPct.cic[mIdx] : 100;
-        const mesoRun = planSource.mesosPct.car[mIdx] !== undefined ? planSource.mesosPct.car[mIdx] : 100;
+        const mesoNat = (planSource.mesosPct && planSource.mesosPct.nat && planSource.mesosPct.nat[mIdx] !== undefined) ? planSource.mesosPct.nat[mIdx] : 100;
+        const mesoCic = (planSource.mesosPct && planSource.mesosPct.cic && planSource.mesosPct.cic[mIdx] !== undefined) ? planSource.mesosPct.cic[mIdx] : 100;
+        const mesoRun = (planSource.mesosPct && planSource.mesosPct.car && planSource.mesosPct.car[mIdx] !== undefined) ? planSource.mesosPct.car[mIdx] : 100;
 
         const weekSwim = (totalMacroSwim * (mesoNat / pools.nat)) * weekFactor;
-        const weekBike = (totalMacroBikeMin * (mesoCic / pools.cic)) * weekFactor;
-        const weekRun = (totalMacroRunMin * (mesoRun / pools.car)) * weekFactor;
+        const weekBikeMin = (totalMacroBikeMin * (mesoCic / pools.cic)) * weekFactor;
+        const weekRunMin = (totalMacroRunMin * (mesoRun / pools.car)) * weekFactor;
 
-        fileNatMts.push(weekSwim);
-        fileCicMin.push(weekBike);
-        fileCarMin.push(weekRun);
-
-        sumNat += weekSwim;
-        sumCic += weekBike;
-        sumCar += weekRun;
+        calculatedNat.push(weekSwim);
+        calculatedCic.push(weekBikeMin);
+        calculatedCar.push(weekRunMin);
 
         const currentMon = new Date(mondayStart.getTime());
         currentMon.setDate(currentMon.getDate() + (s - 1) * 7);
-        colDates.push(formatDateChile(currentMon));
+        fechasColumnas.push(formatDateChile(currentMon));
       }
 
-      const results = {
-        atleta: nombreDeportista,
+      const zN = [...(planSource.zonasSemanales?.nat || [])];
+      const zC = [...(planSource.zonasSemanales?.cic || [])];
+      const zR = [...(planSource.zonasSemanales?.car || [])];
+      for (let i = 0; i < totalWeeks; i++) {
+        if (!zN[i]) zN[i] = 'Z2';
+        if (!zC[i]) zC[i] = 'Z2';
+        if (!zR[i]) zR[i] = 'Z2';
+      }
+
+      const result = {
+        nombreDeportista: selectedAthlete?.nombre || nombreDeportista || 'Atleta EPL',
+        distanciaObjetivo: selectedAthlete?.distanciaObjetivo || 'Olímpica',
         fechaInicio: formatDateChile(mondayStart),
         fechaFin: formatDateChile(endDate),
-        mesos: numMesos,
         semanas: totalWeeks,
-        fechasColumnas: colDates,
-        competencias: planSource.competencias,
-        nat: fileNatMts,
-        cic: fileCicMin,
-        car: fileCarMin,
-        totNat: sumNat,
-        totCic: sumCic,
-        totCar: sumCar,
-        zNat: planSource.zonasSemanales.nat,
-        zCic: planSource.zonasSemanales.cic,
-        zCar: planSource.zonasSemanales.car,
-        rawPlan: planSource,
-        feedback: planSource.feedback !== undefined ? planSource.feedback : feedback,
-        showCompetenciasInReport: planSource.showCompetenciasInReport !== undefined ? planSource.showCompetenciasInReport : showCompetenciasInReport,
-        showFeedbackInReport: planSource.showFeedbackInReport !== undefined ? planSource.showFeedbackInReport : showFeedbackInReport
+        mesos: numMesos,
+        numMesos: numMesos,
+        totalWeeks: totalWeeks,
+        totalMacroSwim,
+        totalMacroBikeMin,
+        totalMacroRunMin,
+        totNat: calculatedNat.reduce((a, b) => a + b, 0),
+        totCic: calculatedCic.reduce((a, b) => a + b, 0),
+        totCar: calculatedCar.reduce((a, b) => a + b, 0),
+        fechasColumnas,
+        nat: calculatedNat,
+        cic: calculatedCic,
+        car: calculatedCar,
+        zNat: zN,
+        zCic: zC,
+        zCar: zR,
+        competencias: planSource.competencias || [],
+        mesosPeriodos: planSource.mesosPeriodos || mesosPeriodos,
+        feedback: feedback || '',
+        showCompetenciasInReport,
+        showFeedbackInReport,
+        rawPlan: planSource
       };
 
-      setCalcCache(results);
+      setCalcCache(result);
       setShowWeeksList(true);
+      return result;
     } catch (e) {
-      Alert.alert('Error', 'Fallo al calcular el macrociclo: ' + e.message);
-    }
-  };
-
-  const loadPlanData = (planData) => {
-    if (!planData) return;
-    setFechaInicio(planData.fechaInicio);
-    setMesociclos(planData.mesos ? planData.mesos.toString() : '3');
-    setBaseNatacion(planData.baseNat ? planData.baseNat.toString() : '6000');
-    setBaseCiclismo(planData.baseCic ? planData.baseCic.toString() : '5');
-    setBaseCarrera(planData.baseCar ? planData.baseCar.toString() : '4');
-
-    setDistSem1(planData.distSem1 ? planData.distSem1.toString() : '23');
-    setDistSem2(planData.distSem2 ? planData.distSem2.toString() : '27');
-    setDistSem3(planData.distSem3 ? planData.distSem3.toString() : '32');
-    setDistSem4(planData.distSem4 ? planData.distSem4.toString() : '18');
-
-    setCompetencias(planData.competencias || []);
-    setMesosPct(planData.mesosPct || DEFAULT_MESO_PCT);
-    setZonasSemanales(planData.zonasSemanales || { nat: [], cic: [], car: [] });
-    setFeedback(planData.feedback || '');
-    setShowCompetenciasInReport(planData.showCompetenciasInReport !== false);
-    setShowFeedbackInReport(planData.showFeedbackInReport !== false);
-    
-    // Calcular de inmediato usando la estructura del plan histórico
-    calculatePlan(planData);
-    setExpandedWeeks({});
-  };
-
-  const confirmDeletePlan = (fInicio) => {
-    const performDelete = () => {
-      onDeletePlan(selectedAtletaId, fInicio);
-      setCalcCache(null);
-      setShowWeeksList(false);
-      Alert.alert('Plan eliminado', `Se eliminó el plan con fecha de inicio ${fInicio}.`);
-    };
-
-    if (Platform.OS === 'web') {
-      if (confirm(`¿Estás seguro de eliminar el plan con fecha de inicio ${fInicio} de este atleta?`)) {
-        performDelete();
-      }
-    } else {
-      Alert.alert(
-        'Eliminar Plan de Historial',
-        `¿Estás seguro de eliminar el plan con fecha de inicio ${fInicio}? Esta acción no se puede deshacer.`,
-        [
-          { text: 'Cancelar', style: 'cancel' },
-          { text: 'Eliminar', onPress: performDelete, style: 'destructive' }
-        ]
-      );
+      console.error(e);
+      Alert.alert('Error', 'Hubo un problema al calcular la planificación: ' + e.message);
+      return null;
     }
   };
 
   const handleSavePlan = () => {
     if (!selectedAtletaId) {
-      Alert.alert('Error', 'Selecciona un deportista primero.');
+      Alert.alert('Error', 'Por favor selecciona un atleta primero.');
       return;
     }
 
-    calculatePlan();
-    
+    const calculated = calculatePlan();
+    if (!calculated) return;
+
     const planData = {
       fechaInicio,
-      mesos: parseInt(mesociclos),
-      baseNat: parseInt(baseNatacion),
-      baseCic: parseInt(baseCiclismo),
-      baseCar: parseInt(baseCarrera),
-      distSem1: parseInt(distSem1),
-      distSem2: parseInt(distSem2),
-      distSem3: parseInt(distSem3),
-      distSem4: parseInt(distSem4),
-      competencias: competencias,
-      mesosPct: mesosPct,
-      zonasSemanales: zonasSemanales,
-      feedback: feedback,
-      showCompetenciasInReport: showCompetenciasInReport,
-      showFeedbackInReport: showFeedbackInReport
+      mesos: parseInt(mesociclos) || 3,
+      baseNat: parseFloat(baseNatacion) || 6000,
+      baseCic: parseFloat(baseCiclismo) || 5,
+      baseCar: parseFloat(baseCarrera) || 4,
+      distSem1: parseFloat(distSem1) || 23,
+      distSem2: parseFloat(distSem2) || 27,
+      distSem3: parseFloat(distSem3) || 32,
+      distSem4: parseFloat(distSem4) || 18,
+      competencias,
+      mesosPct,
+      mesosPeriodos,
+      zonasSemanales,
+      feedback,
+      showCompetenciasInReport,
+      showFeedbackInReport,
+      savedAt: new Date().toISOString()
     };
 
-    onSavePlan(selectedAtletaId, planData);
-    Alert.alert('Guardado', 'Planificación de macrociclo guardada exitosamente.');
+    if (onSavePlan) {
+      onSavePlan(selectedAtletaId, planData);
+      Alert.alert('Éxito', `Plan del macrociclo guardado para ${selectedAthlete?.nombre || 'el deportista'}.`);
+    }
   };
 
   const handleDownloadPDF = async () => {
-    if (!calcCache) {
-      Alert.alert('Calcular primero', 'Por favor calcula la distribución antes de exportar.');
-      return;
+    let currentCalc = calcCache;
+    if (!currentCalc) {
+      currentCalc = calculatePlan();
     }
-    await generatePDFReport(calcCache);
+    if (!currentCalc) return;
+
+    currentCalc.feedback = feedback;
+    currentCalc.showCompetenciasInReport = showCompetenciasInReport;
+    currentCalc.showFeedbackInReport = showFeedbackInReport;
+    currentCalc.mesosPeriodos = mesosPeriodos;
+    currentCalc.distanciaObjetivo = selectedAthlete?.distanciaObjetivo || 'Olímpica';
+
+    await generatePDFReport(currentCalc);
+  };
+
+  const loadPlanData = (plan) => {
+    if (!plan) return;
+    setFechaInicio(plan.fechaInicio || '');
+    const numMeso = plan.mesos || 3;
+    setMesociclos(numMeso.toString());
+    setBaseNatacion(plan.baseNat ? plan.baseNat.toString() : '6000');
+    setBaseCiclismo(plan.baseCic ? plan.baseCic.toString() : '5');
+    setBaseCarrera(plan.baseCar ? plan.baseCar.toString() : '4');
+    setDistSem1(plan.distSem1 ? plan.distSem1.toString() : '23');
+    setDistSem2(plan.distSem2 ? plan.distSem2.toString() : '27');
+    setDistSem3(plan.distSem3 ? plan.distSem3.toString() : '32');
+    setDistSem4(plan.distSem4 ? plan.distSem4.toString() : '18');
+    setCompetencias(plan.competencias || []);
+    setMesosPct(plan.mesosPct || DEFAULT_MESO_PCT);
+    setMesosPeriodos(plan.mesosPeriodos || DEFAULT_PERIODOS.slice(0, numMeso));
+    setFeedback(plan.feedback || '');
+    setShowCompetenciasInReport(plan.showCompetenciasInReport !== false);
+    setShowFeedbackInReport(plan.showFeedbackInReport !== false);
+    setZonasSemanales(plan.zonasSemanales || { nat: [], cic: [], car: [] });
+    
+    setTimeout(() => {
+      calculatePlan(plan);
+    }, 100);
+  };
+
+  const confirmDeletePlan = (fechaPlan) => {
+    Alert.alert(
+      'Eliminar Plan',
+      `¿Deseas eliminar el plan con fecha de inicio ${fechaPlan}?`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        { 
+          text: 'Eliminar', 
+          style: 'destructive',
+          onPress: () => {
+            if (onDeletePlan && selectedAtletaId) {
+              onDeletePlan(selectedAtletaId, fechaPlan);
+            }
+          }
+        }
+      ]
+    );
   };
 
   if (!atletas || atletas.length === 0) {
@@ -515,20 +557,19 @@ export default function PlanificacionTab({ atletas, onSavePlan, onDeletePlan, on
       <View style={styles.emptyContainer}>
         <Ionicons name="people-outline" size={64} color={theme.textMuted} />
         <Text style={[styles.emptyText, { color: theme.textSecondary }]}>
-          Registra un atleta en la pestaña "Cobros" antes de poder planificar un macrociclo.
+          No tienes deportistas registrados.{'\n'}Agrega un atleta en el Inicio para planificar su macrociclo.
         </Text>
       </View>
     );
   }
 
-  const athlete = atletas.find(a => a.id === selectedAtletaId);
-  const planHistory = athlete ? (athlete.planHistory || []) : [];
   const numMesosNum = parseInt(mesociclos) || 3;
   const totalWeeksNum = numMesosNum * 4;
+  const planHistory = selectedAthlete?.planHistory || [];
 
   if (activeSubTab === 'cumplimiento') {
     return (
-      <View style={styles.container}>
+      <View style={{ flex: 1, backgroundColor: theme.background }}>
         <View style={styles.subTabNavContainer}>
           <TouchableOpacity
             style={[styles.subTabNavBtn, activeSubTab === 'macrociclo' && styles.subTabNavBtnActive]}
@@ -570,7 +611,7 @@ export default function PlanificacionTab({ atletas, onSavePlan, onDeletePlan, on
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer} showsVerticalScrollIndicator={false}>
 
-      {/* SubTab Switcher: Macrociclo vs Cumplimiento Real */}
+      {/* SubTab Switcher */}
       <View style={styles.subTabNavContainer}>
         <TouchableOpacity
           style={[styles.subTabNavBtn, activeSubTab === 'macrociclo' && styles.subTabNavBtnActive]}
@@ -609,7 +650,17 @@ export default function PlanificacionTab({ atletas, onSavePlan, onDeletePlan, on
       
       {/* Athlete selector capsules */}
       <View style={styles.selectorCard}>
-        <Text style={styles.label}>Seleccionar Atleta de Biblioteca</Text>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+          <Text style={styles.label}>Seleccionar Atleta de Biblioteca</Text>
+          {selectedAthlete?.distanciaObjetivo ? (
+            <View style={[styles.targetDistanceBadge, { backgroundColor: theme.primary + '18', borderColor: theme.primary }]}>
+              <Text style={[styles.targetDistanceBadgeText, { color: theme.primary }]}>
+                🎯 {selectedAthlete.distanciaObjetivo}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.athleteScroller}>
           {atletas.map(a => (
             <TouchableOpacity
@@ -957,15 +1008,59 @@ export default function PlanificacionTab({ atletas, onSavePlan, onDeletePlan, on
         </View>
       </View>
 
-      {/* Mesocycle Weights */}
-      <Text style={styles.sectionTitle}>Ponderación (%) por Mesociclo</Text>
+      {/* Mesocycle Weights & PERIODS PER MESOCYCLE (Requested by User) */}
+      <Text style={styles.sectionTitle}>Ponderación y Período por Mesociclo</Text>
       <View style={styles.card}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+        <Text style={styles.mesoCardSub}>Configura el período de entrenamiento y la carga para cada mesociclo:</Text>
+        
+        {/* Period Selector per Mesociclo */}
+        <View style={styles.periodMesoGrid}>
+          {Array.from({ length: numMesosNum }).map((_, mIdx) => {
+            const currentP = mesosPeriodos[mIdx] || 'General';
+            return (
+              <View key={mIdx} style={[styles.periodMesoCard, { backgroundColor: theme.surfaceSecondary, borderColor: theme.border }]}>
+                <Text style={styles.periodMesoTitle}>Mesociclo {mIdx + 1}</Text>
+                
+                <View style={styles.periodButtonGroup}>
+                  {['General', 'Específico', 'Competitivo'].map(pOption => {
+                    const isSelected = currentP === pOption;
+                    let pColor = theme.primary;
+                    if (pOption === 'General') pColor = '#0284c7';
+                    if (pOption === 'Específico') pColor = '#ca8a04';
+                    if (pOption === 'Competitivo') pColor = '#dc2626';
+
+                    return (
+                      <TouchableOpacity
+                        key={pOption}
+                        style={[
+                          styles.periodChoiceBtn,
+                          isSelected ? { backgroundColor: pColor, borderColor: pColor } : { borderColor: theme.border }
+                        ]}
+                        onPress={() => setMesoPeriodValue(mIdx, pOption)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={[
+                          styles.periodChoiceText,
+                          { color: isSelected ? '#fff' : theme.textSecondary, fontWeight: isSelected ? '900' : '600' }
+                        ]}>
+                          {pOption}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+            );
+          })}
+        </View>
+
+        {/* Meso Percentage Table */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 10 }}>
           <View style={styles.mesoTable}>
             <View style={[styles.mesoTableRow, { borderBottomColor: theme.border }]}>
               <View style={[styles.mesoTableCellHeader, { backgroundColor: theme.background }]}><Text style={styles.mesoTableHeaderText}>Disciplina</Text></View>
               {Array.from({ length: numMesosNum }).map((_, mIdx) => (
-                <View key={mIdx} style={[styles.mesoTableCellHeader, { backgroundColor: theme.background }]}><Text style={styles.mesoTableHeaderText}>M{mIdx + 1}</Text></View>
+                <View key={mIdx} style={[styles.mesoTableCellHeader, { backgroundColor: theme.background }]}><Text style={styles.mesoTableHeaderText}>M{mIdx + 1} ({mesosPeriodos[mIdx]?.substring(0, 3) || 'Gen'})</Text></View>
               ))}
             </View>
 
@@ -1024,12 +1119,15 @@ export default function PlanificacionTab({ atletas, onSavePlan, onDeletePlan, on
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ marginVertical: 8, gap: 6, paddingBottom: 6 }}>
           {Array.from({ length: totalWeeksNum }).map((_, wIdx) => {
             const isSelected = activeZoneWeekIndex === wIdx;
+            const wMesoIdx = Math.ceil((wIdx + 1) / 4) - 1;
+            const wPeriodo = mesosPeriodos[wMesoIdx] || 'General';
+
             return (
               <TouchableOpacity
                 key={wIdx}
                 style={[
                   styles.weekBubble, 
-                  { height: 44, justifyContent: 'center', paddingHorizontal: 12, borderRadius: 10 },
+                  { height: 48, justifyContent: 'center', paddingHorizontal: 12, borderRadius: 12 },
                   isSelected ? { backgroundColor: theme.primary, borderColor: theme.primary } : { backgroundColor: theme.surfaceSecondary, borderColor: theme.border }
                 ]}
                 onPress={() => setActiveZoneWeekIndex(wIdx)}
@@ -1216,6 +1314,12 @@ export default function PlanificacionTab({ atletas, onSavePlan, onDeletePlan, on
             }
 
             const isExpanded = !!expandedWeeks[idx];
+            const mesoNum = Math.ceil((idx + 1) / 4);
+            const mesoPeriodo = mesosPeriodos[mesoNum - 1] || 'General';
+
+            let badgePeriodColor = '#0284c7';
+            if (mesoPeriodo === 'Específico') badgePeriodColor = '#ca8a04';
+            if (mesoPeriodo === 'Competitivo') badgePeriodColor = '#dc2626';
 
             return (
               <View key={idx} style={[styles.weekCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
@@ -1226,10 +1330,13 @@ export default function PlanificacionTab({ atletas, onSavePlan, onDeletePlan, on
                   onPress={() => toggleWeekExpanded(idx)}
                 >
                   <View style={{ flex: 1 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
                       <Text style={[styles.weekCardTitle, { color: theme.text }]}>Semana {idx + 1}</Text>
                       <View style={[styles.mesoLabelBadge, { backgroundColor: theme.surfaceSecondary, borderColor: theme.border }]}>
-                        <Text style={[styles.mesoLabelBadgeText, { color: theme.primary }]}>Meso {Math.ceil((idx + 1) / 4)}</Text>
+                        <Text style={[styles.mesoLabelBadgeText, { color: theme.primary }]}>Meso {mesoNum}</Text>
+                      </View>
+                      <View style={[styles.periodTagBadge, { backgroundColor: badgePeriodColor + '18', borderColor: badgePeriodColor + '50' }]}>
+                        <Text style={[styles.periodTagBadgeText, { color: badgePeriodColor }]}>Período {mesoPeriodo}</Text>
                       </View>
                     </View>
                     <Text style={[styles.weekCardDate, { color: theme.textSecondary }]}>{fecha}</Text>
@@ -1367,6 +1474,16 @@ const getStyles = (theme) => StyleSheet.create({
     shadowRadius: 8,
     elevation: 2,
   },
+  targetDistanceBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  targetDistanceBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
   athleteScroller: {
     gap: 8,
     paddingVertical: 6,
@@ -1399,155 +1516,139 @@ const getStyles = (theme) => StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: theme.surfaceSecondary,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: theme.border,
-    borderRadius: 20,
     overflow: 'hidden',
   },
   historyPlanBubble: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 6,
-    paddingHorizontal: 12,
+    paddingVertical: 7,
+    paddingHorizontal: 10,
   },
   historyPlanText: {
     fontSize: 11,
-    fontWeight: '800',
+    fontWeight: '700',
   },
   historyPlanDeleteBtn: {
-    paddingVertical: 7,
-    paddingHorizontal: 10,
+    padding: 7,
     borderLeftWidth: 1,
     borderLeftColor: theme.border,
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   formGroup: {
     marginBottom: 12,
   },
   label: {
-    fontSize: 9,
+    fontSize: 9.5,
+    fontWeight: '800',
     color: theme.textSecondary,
     textTransform: 'uppercase',
-    marginBottom: 6,
     letterSpacing: 0.5,
-    fontWeight: '700',
+    marginBottom: 6,
   },
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: theme.background,
+    backgroundColor: theme.surfaceSecondary,
     borderWidth: 1,
     borderColor: theme.border,
-    borderRadius: 10,
+    borderRadius: 12,
     paddingHorizontal: 12,
-    height: 44,
+    height: 42,
   },
   inputFocused: {
     borderColor: theme.primary,
-    backgroundColor: theme.surface,
   },
   inputStyle: {
     flex: 1,
+    fontSize: 13,
     color: theme.text,
-    fontSize: 14,
-    height: '100%',
-    fontWeight: '500',
+    fontWeight: '600',
   },
   compsListContainer: {
-    marginBottom: 12,
+    gap: 8,
+    marginBottom: 10,
   },
   compRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: theme.background,
-    padding: 12,
+    backgroundColor: theme.surfaceSecondary,
+    padding: 10,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: theme.border,
-    marginBottom: 8,
   },
   compIconCircle: {
     width: 28,
     height: 28,
-    borderRadius: 8,
-    backgroundColor: 'rgba(234, 88, 12, 0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(234, 88, 12, 0.15)',
-    justifyContent: 'center',
+    borderRadius: 14,
+    backgroundColor: theme.runBg,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   compName: {
-    color: theme.text,
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: '800',
+    color: theme.text,
   },
   compDate: {
+    fontSize: 10.5,
     color: theme.textSecondary,
-    fontSize: 11,
-    marginTop: 2,
-    fontWeight: '500',
+    marginTop: 1,
   },
   compDeleteBtn: {
-    padding: 8,
-    borderRadius: 10,
-    backgroundColor: theme.surface,
-    borderWidth: 1,
-    borderColor: theme.border,
+    padding: 4,
   },
   emptyTextSub: {
-    fontSize: 12,
+    fontSize: 11.5,
     textAlign: 'center',
-    marginVertical: 12,
-    fontWeight: '500',
+    marginVertical: 6,
+    fontStyle: 'italic',
+  },
+  addCompContainer: {
+    backgroundColor: theme.surfaceSecondary,
+    padding: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: theme.border,
+    marginTop: 6,
+  },
+  formInput: {
+    backgroundColor: theme.surfaceSecondary,
+    borderWidth: 1,
+    borderColor: theme.border,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 12.5,
+    color: theme.text,
+    fontWeight: '600',
   },
   btnAddComp: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 12,
-    backgroundColor: theme.surfaceSecondary,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: theme.border,
+    paddingVertical: 10,
+    backgroundColor: theme.glowColor,
+    borderRadius: 12,
+    marginTop: 4,
   },
   btnAddCompText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '800',
-    textTransform: 'uppercase',
     marginLeft: 6,
-    letterSpacing: 0.5,
-  },
-  addCompContainer: {
-    backgroundColor: theme.background,
-    borderWidth: 1,
-    borderColor: theme.border,
-    borderRadius: 14,
-    padding: 14,
-    marginTop: 8,
-  },
-  formInput: {
-    borderWidth: 1,
-    borderColor: theme.border,
-    color: theme.text,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    height: 42,
-    fontSize: 13,
-    fontWeight: '500',
   },
   btnActionSmall: {
-    paddingVertical: 10,
-    borderRadius: 8,
+    paddingVertical: 8,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
   },
   btnActionSmallText: {
-    color: '#fff',
+    fontSize: 12,
     fontWeight: '800',
-    fontSize: 11,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    color: '#fff',
   },
   distGrid: {
     flexDirection: 'row',
@@ -1556,258 +1657,276 @@ const getStyles = (theme) => StyleSheet.create({
   distCol: {
     flex: 1,
   },
+  mesoCardSub: {
+    fontSize: 11,
+    color: theme.textSecondary,
+    marginBottom: 10,
+  },
+  periodMesoGrid: {
+    gap: 8,
+    marginBottom: 10,
+  },
+  periodMesoCard: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 10,
+  },
+  periodMesoTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: theme.text,
+    textTransform: 'uppercase',
+    marginBottom: 6,
+  },
+  periodButtonGroup: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  periodChoiceBtn: {
+    flex: 1,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: theme.surface,
+  },
+  periodChoiceText: {
+    fontSize: 10,
+  },
   mesoTable: {
-    flexDirection: 'column',
-    minWidth: 380,
+    borderWidth: 1,
+    borderColor: theme.border,
+    borderRadius: 12,
+    overflow: 'hidden',
   },
   mesoTableRow: {
     flexDirection: 'row',
     borderBottomWidth: 1,
-    alignItems: 'center',
   },
   mesoTableCellHeader: {
-    flex: 1.2,
-    paddingVertical: 10,
+    width: 80,
+    paddingVertical: 8,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   mesoTableHeaderText: {
-    color: theme.primary,
+    fontSize: 10,
     fontWeight: '800',
-    fontSize: 11,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    color: theme.textSecondary,
   },
   mesoTableCell: {
-    flex: 1.2,
-    paddingVertical: 8,
-    paddingHorizontal: 4,
+    width: 80,
+    paddingVertical: 6,
+    paddingHorizontal: 6,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   mesoInput: {
     width: '100%',
+    height: 32,
     borderWidth: 1,
-    textAlign: 'center',
     borderRadius: 8,
-    fontSize: 13,
-    paddingVertical: 6,
-    fontWeight: '600',
+    textAlign: 'center',
+    fontSize: 12,
+    fontWeight: '800',
   },
   weekBubble: {
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 20,
     borderWidth: 1,
+    alignItems: 'center',
   },
   weekBubbleText: {
     fontSize: 11,
-    fontWeight: '800',
   },
   zoneControlBox: {
     borderWidth: 1,
-    borderRadius: 16,
-    padding: 14,
-    marginTop: 10,
+    borderRadius: 14,
+    padding: 12,
+    marginTop: 6,
   },
   zoneControlTitle: {
     fontSize: 12,
     fontWeight: '800',
+    marginBottom: 10,
     textTransform: 'uppercase',
-    marginBottom: 14,
-    textAlign: 'center',
-    letterSpacing: 1,
   },
   zoneRow: {
-    marginBottom: 14,
+    marginBottom: 10,
   },
   zoneRowLabel: {
-    fontSize: 10,
-    textTransform: 'uppercase',
-    marginBottom: 8,
-    letterSpacing: 0.5,
+    fontSize: 11,
     fontWeight: '800',
+    marginBottom: 6,
   },
   zonesSelectorRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 4,
+    gap: 6,
   },
   zonePill: {
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-    borderWidth: 1,
+    paddingVertical: 5,
+    paddingHorizontal: 9,
     borderRadius: 8,
-    alignItems: 'center',
-    minWidth: 38,
+    borderWidth: 1,
   },
   zonePillText: {
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '800',
   },
   actionsContainer: {
     gap: 10,
-    marginVertical: 16,
+    marginVertical: 14,
   },
   btn: {
     flexDirection: 'row',
-    height: 50,
-    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: theme.shadowColor,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 6,
+    paddingVertical: 13,
+    borderRadius: 14,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
     elevation: 2,
   },
   btnText: {
     color: '#fff',
-    fontWeight: '850',
-    fontSize: 12,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    fontSize: 13,
+    fontWeight: '900',
   },
   calcSummaryBox: {
-    borderLeftWidth: 4,
-    padding: 16,
-    borderRadius: 20,
     borderWidth: 1,
+    borderLeftWidth: 4,
+    borderRadius: 16,
+    padding: 14,
     marginBottom: 16,
-    shadowColor: theme.shadowColor,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: theme.shadowOpacity,
-    shadowRadius: 10,
   },
   calcSummaryTitle: {
     fontSize: 14,
-    fontWeight: '800',
+    fontWeight: '900',
   },
   calcSummaryText: {
     fontSize: 12,
-    marginTop: 4,
-    fontWeight: '500',
+    marginTop: 2,
   },
   calcSummaryDates: {
     fontSize: 11,
     marginTop: 2,
-    fontWeight: '500',
   },
   summaryTotalsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: 12,
-    paddingTop: 10,
     borderTopWidth: 1,
+    marginTop: 10,
+    paddingTop: 8,
   },
   weekCard: {
     borderWidth: 1,
-    borderRadius: 20,
-    padding: 14,
-    marginBottom: 10,
-    shadowColor: theme.shadowColor,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: theme.shadowOpacity,
-    shadowRadius: 8,
-    elevation: 2,
+    borderRadius: 16,
+    padding: 12,
+    marginBottom: 8,
   },
   weekCardHeader: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
   },
   weekCardTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  weekCardDate: {
-    fontSize: 11,
-    marginTop: 2,
-    fontWeight: '500',
+    fontSize: 13,
+    fontWeight: '900',
   },
   mesoLabelBadge: {
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    borderRadius: 20,
-    alignSelf: 'center',
     borderWidth: 1,
-    marginLeft: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
   },
   mesoLabelBadgeText: {
     fontSize: 9,
     fontWeight: '800',
-    textTransform: 'uppercase',
+  },
+  periodTagBadge: {
+    borderWidth: 1,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  periodTagBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+  },
+  weekCardDate: {
+    fontSize: 10,
+    marginTop: 2,
   },
   metricsPreviewRow: {
     flexDirection: 'row',
     gap: 4,
-    alignSelf: 'center',
   },
   previewMetricPill: {
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    borderRadius: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
   },
   previewMetricText: {
-    fontSize: 9,
+    fontSize: 9.5,
     fontWeight: '800',
   },
   expandedContent: {
+    borderTopWidth: 1,
     marginTop: 10,
     paddingTop: 10,
-    borderTopWidth: 1,
   },
   weekRaceBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-    marginBottom: 10,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    marginBottom: 8,
     alignSelf: 'flex-start',
   },
   weekRaceText: {
     color: '#fff',
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: '800',
-    textTransform: 'uppercase',
   },
   weekMetricsRow: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 6,
   },
   weekMetricCol: {
     flex: 1,
-    padding: 10,
-    borderRadius: 14,
-    alignItems: 'center',
+    padding: 8,
+    borderRadius: 10,
   },
   metricSportLabel: {
-    fontSize: 10,
-    fontWeight: '850',
-    textTransform: 'uppercase',
+    fontSize: 9,
+    fontWeight: '800',
+    marginBottom: 2,
   },
   weekMetricValue: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '900',
-    marginVertical: 4,
   },
   weekMetricZoneBadge: {
-    paddingVertical: 2,
-    paddingHorizontal: 8,
-    borderRadius: 10,
-    marginTop: 2,
     borderWidth: 1,
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginTop: 4,
+    alignSelf: 'flex-start',
   },
   weekMetricZoneText: {
-    fontSize: 9,
-    fontWeight: '900',
+    fontSize: 8.5,
+    fontWeight: '800',
   },
   subTabNavContainer: {
     flexDirection: 'row',
     backgroundColor: theme.surfaceSecondary,
-    marginHorizontal: 16,
-    marginTop: 12,
-    marginBottom: 10,
-    borderRadius: 12,
+    borderRadius: 14,
     padding: 4,
+    marginBottom: 14,
     borderWidth: 1,
     borderColor: theme.border,
   },
@@ -1816,18 +1935,19 @@ const getStyles = (theme) => StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 10,
-    borderRadius: 8,
+    paddingVertical: 8,
+    borderRadius: 10,
   },
   subTabNavBtnActive: {
     backgroundColor: theme.primary,
   },
   subTabNavText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
     color: theme.textSecondary,
   },
   subTabNavTextActive: {
     color: '#ffffff',
+    fontWeight: '900',
   },
 });

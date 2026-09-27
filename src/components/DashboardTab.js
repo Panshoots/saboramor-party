@@ -40,6 +40,7 @@ export default function DashboardTab({ atletas, setCurrentTab, onSaveAtleta, onD
   const [nombre, setNombre] = useState('');
   const [email, setEmail] = useState('');
   const [tipoAtleta, setTipoAtleta] = useState('Triathlete'); // Triathlete, Runner, Swimmer, Cyclist
+  const [distanciaObjetivo, setDistanciaObjetivo] = useState('Olímpica'); // Sprint, Olímpica, Media distancia / 70.3, Ironman
   const [genero, setGenero] = useState('Female'); // Female, Male, Otro
   const [username, setUsername] = useState('');
   const [fechaNacimiento, setFechaNacimiento] = useState('01/07/1994');
@@ -75,6 +76,7 @@ export default function DashboardTab({ atletas, setCurrentTab, onSaveAtleta, onD
     setNombre(athlete.nombre || '');
     setEmail(athlete.email || '');
     setTipoAtleta(athlete.tipoAtleta || 'Triathlete');
+    setDistanciaObjetivo(athlete.distanciaObjetivo || 'Olímpica');
     setGenero(athlete.genero || 'Female');
     setUsername(athlete.username || '');
     setFechaNacimiento(athlete.fechaNacimiento || '01/07/1994');
@@ -98,6 +100,7 @@ export default function DashboardTab({ atletas, setCurrentTab, onSaveAtleta, onD
     setNombre('');
     setEmail('');
     setTipoAtleta('Triathlete');
+    setDistanciaObjetivo('Olímpica');
     setGenero('Female');
     setUsername('');
     setFechaNacimiento('01/07/1994');
@@ -134,6 +137,7 @@ export default function DashboardTab({ atletas, setCurrentTab, onSaveAtleta, onD
       nombre: nombre.trim(),
       email: email.trim(),
       tipoAtleta,
+      distanciaObjetivo,
       genero,
       username: username.trim() || nombre.toLowerCase().replace(/\s/g, ''),
       direccion: direccion.trim(),
@@ -214,9 +218,12 @@ export default function DashboardTab({ atletas, setCurrentTab, onSaveAtleta, onD
       let athleteSum = 0;
       Object.keys(a.ecosWeekly).forEach(day => {
         const dayData = a.ecosWeekly[day];
-        athleteSum += (parseFloat(dayData.natacion.ecos) || 0);
-        athleteSum += (parseFloat(dayData.ciclismo.ecos) || 0);
-        athleteSum += (parseFloat(dayData.carrera.ecos) || 0);
+        if (dayData) {
+          if (dayData.natacion?.ecos) athleteSum += parseFloat(dayData.natacion.ecos) || 0;
+          if (dayData.ciclismo?.ecos) athleteSum += parseFloat(dayData.ciclismo.ecos) || 0;
+          if (dayData.carrera?.ecos) athleteSum += parseFloat(dayData.carrera.ecos) || 0;
+          if (dayData.fuerza?.ecos) athleteSum += parseFloat(dayData.fuerza.ecos) || 0;
+        }
       });
       totalWeeklyEcosSum += athleteSum;
     }
@@ -229,7 +236,6 @@ export default function DashboardTab({ atletas, setCurrentTab, onSaveAtleta, onD
 
   const upcomingCompetitions = [];
   atletas.forEach(a => {
-    // Check both plan and planHistory
     const comps = a.plan?.competencias || [];
     comps.forEach(c => {
       const compDate = new Date(c.fecha + 'T00:00:00');
@@ -245,63 +251,44 @@ export default function DashboardTab({ atletas, setCurrentTab, onSaveAtleta, onD
       }
     });
   });
-  // Sort by days remaining
   upcomingCompetitions.sort((a, b) => a.diasRestantes - b.diasRestantes);
 
-  // 3. Macrocycle Progress Tracking
+  // 3. Macrocycles Progress
   const macrocyclesProgress = [];
   atletas.forEach(a => {
-    const plan = a.plan;
-    if (plan && plan.fechaInicio) {
-      const numMesos = plan.mesos || 3;
-      const totalWeeks = numMesos * 4;
+    if (a.plan && a.plan.fechaInicio) {
+      const d = new Date(a.plan.fechaInicio + 'T00:00:00');
+      const mesos = parseInt(a.plan.mesos) || 3;
+      const totalDays = mesos * 4 * 7;
+      const diffDays = Math.floor((today - d) / (1000 * 60 * 60 * 24));
       
-      // Calculate Monday of start week
-      let d = new Date(plan.fechaInicio + 'T00:00:00');
-      let day = d.getDay();
-      let diff = d.getDate() - day + (day === 0 ? -6 : 1);
-      const startMonday = new Date(d.setDate(diff));
-      startMonday.setHours(0,0,0,0);
-
-      const diffTime = today - startMonday;
-      const weekIndex = Math.floor(diffTime / (7 * 24 * 60 * 60 * 1000)) + 1;
-
       let pct = 0;
-      let statusText = '';
-      if (weekIndex < 1) {
-        pct = 0;
-        statusText = 'Por comenzar';
-      } else if (weekIndex > totalWeeks) {
-        pct = 100;
-        statusText = 'Completado';
-      } else {
-        pct = (weekIndex / totalWeeks) * 100;
-        statusText = `Semana ${weekIndex} de ${totalWeeks}`;
+      let statusText = 'Por iniciar';
+      if (diffDays >= 0) {
+        pct = Math.min(100, Math.round((diffDays / totalDays) * 100));
+        const currentWeek = Math.min(mesos * 4, Math.floor(diffDays / 7) + 1);
+        statusText = `Semana ${currentWeek} de ${mesos * 4} (${pct}%)`;
       }
-
       macrocyclesProgress.push({
         atletaNombre: a.nombre,
-        semanaActual: weekIndex,
-        semanasTotales: totalWeeks,
         porcentaje: pct,
-        statusText: statusText
+        statusText
       });
     }
   });
 
-  // 4. Centralized Activity Feed (Top 5 Logs)
+  // 4. Feed/Activity Logs
   const allLogs = [];
   atletas.forEach(a => {
-    const logs = a.historial || [];
-    logs.forEach(l => {
+    const hist = a.historial || [];
+    hist.forEach(h => {
       allLogs.push({
-        ...l,
+        ...h,
         atletaNombre: a.nombre,
         atletaId: a.id
       });
     });
   });
-  // Sort logs by ID (timestamp) descending
   allLogs.sort((a, b) => b.id - a.id);
   const recentLogs = allLogs.slice(0, 5);
 
@@ -442,7 +429,7 @@ export default function DashboardTab({ atletas, setCurrentTab, onSaveAtleta, onD
         </TouchableOpacity>
       </View>
 
-      {/* Athlete Management List (Complete CRUD directly from Dashboard) */}
+      {/* Athlete Management List */}
       <View style={styles.sectionHeaderRow}>
         <Text style={styles.sectionTitle}>Gestión de Deportistas ({totalAtletas})</Text>
         <TouchableOpacity onPress={openAddModal} style={styles.linkHeaderBtn}>
@@ -471,6 +458,9 @@ export default function DashboardTab({ atletas, setCurrentTab, onSaveAtleta, onD
                 <View style={styles.athleteInfoCol}>
                   <Text style={styles.athleteNameText}>{atleta.nombre}</Text>
                   <Text style={styles.athleteSubDetails}>
+                    {atleta.distanciaObjetivo ? (
+                      <Text style={{ color: theme.primary, fontWeight: '700' }}>{atleta.distanciaObjetivo} • </Text>
+                    ) : null}
                     {atleta.tipoPlan === 'trimestral' ? 'Trimestral' : 'Mensual'} • {formatCLP(atleta.monto)}
                   </Text>
                 </View>
@@ -548,35 +538,41 @@ export default function DashboardTab({ atletas, setCurrentTab, onSaveAtleta, onD
                 <Ionicons name="trophy" size={14} color={theme.run} />
               </View>
               <View style={{ flex: 1, marginLeft: 12 }}>
-                <Text style={styles.agendaRaceName}>{item.carreraNombre}</Text>
-                <Text style={styles.agendaAthleteName}>{item.atletaNombre} — {item.fecha}</Text>
+                <Text style={styles.agendaCompTitle}>{item.carreraNombre}</Text>
+                <Text style={styles.agendaAthleteName}>{item.atletaNombre} • {item.fecha}</Text>
               </View>
-              <View style={[styles.agendaCountdown, { backgroundColor: item.diasRestantes <= 14 ? theme.errorBg : theme.surfaceSecondary }]}>
-                <Text style={[styles.agendaCountdownText, { color: item.diasRestantes <= 14 ? theme.error : theme.textSecondary }]}>
-                  {item.diasRestantes} días
+              <View style={[styles.agendaDaysBadge, { backgroundColor: item.diasRestantes <= 14 ? theme.errorBg : theme.surfaceSecondary }]}>
+                <Text style={[styles.agendaDaysText, { color: item.diasRestantes <= 14 ? theme.error : theme.text }]}>
+                  {item.diasRestantes === 0 ? '¡Hoy!' : `en ${item.diasRestantes}d`}
                 </Text>
               </View>
             </View>
           ))
         ) : (
-          <Text style={[styles.emptyText, { color: theme.textMuted }]}>No hay competencias futuras agendadas.</Text>
+          <Text style={[styles.emptyText, { color: theme.textMuted }]}>No hay competencias programadas próximamente.</Text>
         )}
       </View>
 
-      {/* Centralized Feed of Recent Activity */}
-      <Text style={styles.sectionTitle}>Bitácora de Actividad Reciente</Text>
-      <View style={styles.feedContainer}>
+      {/* Recent Activity Log */}
+      <Text style={styles.sectionTitle}>Registro de Actividades Recientes</Text>
+      <View style={styles.feedCard}>
         {recentLogs.length > 0 ? (
-          recentLogs.map((log) => {
-            const style = getLogColors(log.tipo);
+          recentLogs.map((log, idx) => {
+            const colors = getLogColors(log.tipo);
             return (
-              <View key={log.id} style={[styles.feedCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-                <View style={styles.feedHeader}>
-                  <View style={[styles.feedIconBg, { backgroundColor: style.bg }]}>
-                    <Ionicons name={style.icon} size={14} color={style.color} />
+              <View 
+                key={log.id || idx} 
+                style={[
+                  styles.feedRow,
+                  idx < recentLogs.length - 1 ? { borderBottomColor: theme.border, borderBottomWidth: 1 } : null
+                ]}
+              >
+                <View style={styles.feedHeaderRow}>
+                  <View style={[styles.feedIconBox, { backgroundColor: colors.bg }]}>
+                    <Ionicons name={colors.icon} size={13} color={colors.color} />
                   </View>
-                  <View style={{ flex: 1, marginLeft: 10 }}>
-                    <Text style={styles.feedAthleteName}>{log.atletaNombre}</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.feedAthlete}>{log.atletaNombre}</Text>
                     <Text style={styles.feedLogDate}>{log.fecha} • {log.tipo}</Text>
                   </View>
                 </View>
@@ -677,7 +673,7 @@ export default function DashboardTab({ atletas, setCurrentTab, onSaveAtleta, onD
                       <Text style={styles.label}>Foto de perfil</Text>
                       <View style={styles.photoSection}>
                         <View style={styles.photoBox}>
-                          <Text style={styles.photoBoxText}>👩‍✈️</Text>
+                          <Text style={styles.photoBoxText}>🏃‍♂️</Text>
                         </View>
                         <View style={styles.photoActions}>
                           <TouchableOpacity style={styles.photoBtn} activeOpacity={0.7} onPress={() => Alert.alert('Simulador', 'Foto de perfil predefinida cargada.')}>
@@ -715,6 +711,29 @@ export default function DashboardTab({ atletas, setCurrentTab, onSaveAtleta, onD
                           onFocus={() => setFocusedField('email')}
                           onBlur={() => setFocusedField(null)}
                         />
+                      </View>
+
+                      {/* Distancia Objetivo (Requested by User) */}
+                      <View style={styles.formGroup}>
+                        <Text style={styles.label}>🎯 Distancia Objetivo</Text>
+                        <View style={styles.segmentPicker}>
+                          {[
+                            { id: 'Sprint', label: 'Sprint' },
+                            { id: 'Olímpica', label: 'Olímpica' },
+                            { id: 'Media distancia / 70.3', label: '70.3' },
+                            { id: 'Ironman', label: 'Ironman' }
+                          ].map(d => (
+                            <TouchableOpacity
+                              key={d.id}
+                              style={[styles.segmentBtn, distanciaObjetivo === d.id ? { backgroundColor: theme.primary } : null]}
+                              onPress={() => setDistanciaObjetivo(d.id)}
+                            >
+                              <Text style={[styles.segmentText, { color: distanciaObjetivo === d.id ? '#fff' : theme.textSecondary }]}>
+                                {d.label}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
                       </View>
 
                       <View style={styles.formGroup}>
@@ -757,35 +776,140 @@ export default function DashboardTab({ atletas, setCurrentTab, onSaveAtleta, onD
                           style={[styles.input, focusedField === 'username' ? styles.inputFocused : null]}
                           value={username}
                           onChangeText={setUsername}
-                          placeholder="Ej: Conysolis"
+                          placeholder="Ej: montserrat.coilla"
                           placeholderTextColor={theme.textMuted}
+                          autoCapitalize="none"
                           onFocus={() => setFocusedField('username')}
                           onBlur={() => setFocusedField(null)}
                         />
+                      </View>
+
+                      <View style={styles.formGroup}>
+                        <Text style={styles.label}>Fecha de nacimiento (DD/MM/AAAA)</Text>
+                        <TextInput 
+                          style={[styles.input, focusedField === 'fechaNacimiento' ? styles.inputFocused : null]}
+                          value={fechaNacimiento}
+                          onChangeText={setFechaNacimiento}
+                          placeholder="Ej: 01/07/1994"
+                          placeholderTextColor={theme.textMuted}
+                          onFocus={() => setFocusedField('fechaNacimiento')}
+                          onBlur={() => setFocusedField(null)}
+                        />
+                      </View>
+
+                      <Text style={[styles.sectionHeader, { marginTop: 16 }]}>Dirección y contacto</Text>
+                      
+                      <View style={styles.formGroup}>
+                        <Text style={styles.label}>Dirección física</Text>
+                        <TextInput 
+                          style={[styles.input, focusedField === 'direccion' ? styles.inputFocused : null]}
+                          value={direccion}
+                          onChangeText={setDireccion}
+                          placeholder="Ej: Av. Las Condes 12345"
+                          placeholderTextColor={theme.textMuted}
+                          onFocus={() => setFocusedField('direccion')}
+                          onBlur={() => setFocusedField(null)}
+                        />
+                      </View>
+
+                      <View style={styles.rowTwoCols}>
+                        <View style={[styles.formGroup, { flex: 1, marginRight: 8 }]}>
+                          <Text style={styles.label}>Ciudad</Text>
+                          <TextInput 
+                            style={[styles.input, focusedField === 'ciudad' ? styles.inputFocused : null]}
+                            value={ciudad}
+                            onChangeText={setCiudad}
+                            placeholder="Santiago"
+                            placeholderTextColor={theme.textMuted}
+                            onFocus={() => setFocusedField('ciudad')}
+                            onBlur={() => setFocusedField(null)}
+                          />
+                        </View>
+                        <View style={[styles.formGroup, { flex: 1, marginLeft: 8 }]}>
+                          <Text style={styles.label}>Región / Estado</Text>
+                          <TextInput 
+                            style={[styles.input, focusedField === 'estadoProvincia' ? styles.inputFocused : null]}
+                            value={estadoProvincia}
+                            onChangeText={setEstadoProvincia}
+                            placeholder="Metropolitana"
+                            placeholderTextColor={theme.textMuted}
+                            onFocus={() => setFocusedField('estadoProvincia')}
+                            onBlur={() => setFocusedField(null)}
+                          />
+                        </View>
+                      </View>
+
+                      <View style={styles.rowTwoCols}>
+                        <View style={[styles.formGroup, { flex: 1, marginRight: 8 }]}>
+                          <Text style={styles.label}>País</Text>
+                          <TextInput 
+                            style={[styles.input, focusedField === 'pais' ? styles.inputFocused : null]}
+                            value={pais}
+                            onChangeText={setPais}
+                            placeholder="Chile"
+                            placeholderTextColor={theme.textMuted}
+                            onFocus={() => setFocusedField('pais')}
+                            onBlur={() => setFocusedField(null)}
+                          />
+                        </View>
+                        <View style={[styles.formGroup, { flex: 1, marginLeft: 8 }]}>
+                          <Text style={styles.label}>Código Postal</Text>
+                          <TextInput 
+                            style={[styles.input, focusedField === 'codigoPostal' ? styles.inputFocused : null]}
+                            value={codigoPostal}
+                            onChangeText={setCodigoPostal}
+                            placeholder="7550000"
+                            placeholderTextColor={theme.textMuted}
+                            keyboardType="numeric"
+                            onFocus={() => setFocusedField('codigoPostal')}
+                            onBlur={() => setFocusedField(null)}
+                          />
+                        </View>
+                      </View>
+
+                      <View style={styles.rowTwoCols}>
+                        <View style={[styles.formGroup, { flex: 1, marginRight: 8 }]}>
+                          <Text style={styles.label}>Teléfono</Text>
+                          <TextInput 
+                            style={[styles.input, focusedField === 'telefono' ? styles.inputFocused : null]}
+                            value={telefono}
+                            onChangeText={setTelefono}
+                            placeholder="+56 2 2233 4455"
+                            placeholderTextColor={theme.textMuted}
+                            keyboardType="phone-pad"
+                            onFocus={() => setFocusedField('telefono')}
+                            onBlur={() => setFocusedField(null)}
+                          />
+                        </View>
+                        <View style={[styles.formGroup, { flex: 1, marginLeft: 8 }]}>
+                          <Text style={styles.label}>Celular (WhatsApp)</Text>
+                          <TextInput 
+                            style={[styles.input, focusedField === 'celular' ? styles.inputFocused : null]}
+                            value={celular}
+                            onChangeText={setCelular}
+                            placeholder="+56 9 8765 4321"
+                            placeholderTextColor={theme.textMuted}
+                            keyboardType="phone-pad"
+                            onFocus={() => setFocusedField('celular')}
+                            onBlur={() => setFocusedField(null)}
+                          />
+                        </View>
                       </View>
                     </View>
                   )}
 
                   {activeSection === 'Pagos' && (
                     <View>
-                      <Text style={styles.sectionHeader}>Suscripción y pagos</Text>
-                      <Text style={styles.sectionSubtitle}>Detalles del plan mensual o trimestral</Text>
+                      <Text style={styles.sectionHeader}>Planes y Pagos de Mensualidad</Text>
+                      <Text style={styles.sectionSubtitle}>Ajustes de facturación del deportista</Text>
 
                       <View style={styles.formGroup}>
-                        <Text style={styles.label}>Tipo de Cuenta</Text>
-                        <View style={[styles.photoSection, { padding: 14 }]}>
-                          <Ionicons name="shield-checkmark" size={20} color={theme.success} />
-                          <Text style={{ fontSize: 13, fontWeight: '700', color: theme.text }}>Premium Trial</Text>
-                        </View>
-                      </View>
-
-                      <View style={styles.formGroup}>
-                        <Text style={styles.label}>Monto Suscripción ($)</Text>
+                        <Text style={styles.label}>Monto del plan (CLP)</Text>
                         <TextInput 
                           style={[styles.input, focusedField === 'monto' ? styles.inputFocused : null]}
                           value={monto}
                           onChangeText={setMonto}
-                          placeholder="Ej: 40000"
+                          placeholder="40000"
                           placeholderTextColor={theme.textMuted}
                           keyboardType="numeric"
                           onFocus={() => setFocusedField('monto')}
@@ -794,16 +918,19 @@ export default function DashboardTab({ atletas, setCurrentTab, onSaveAtleta, onD
                       </View>
 
                       <View style={styles.formGroup}>
-                        <Text style={styles.label}>Tipo de Plan</Text>
+                        <Text style={styles.label}>Frecuencia de Facturación</Text>
                         <View style={styles.segmentPicker}>
-                          {['mensual', 'trimestral'].map(p => (
+                          {[
+                            { id: 'mensual', label: 'Mensual' },
+                            { id: 'trimestral', label: 'Trimestral' }
+                          ].map(p => (
                             <TouchableOpacity
-                              key={p}
-                              style={[styles.segmentBtn, tipoPlan === p ? { backgroundColor: theme.primary } : null]}
-                              onPress={() => setTipoPlan(p)}
+                              key={p.id}
+                              style={[styles.segmentBtn, tipoPlan === p.id ? { backgroundColor: theme.primary } : null]}
+                              onPress={() => setTipoPlan(p.id)}
                             >
-                              <Text style={[styles.segmentText, { color: tipoPlan === p ? '#fff' : theme.textSecondary }]}>
-                                {p === 'mensual' ? 'Mensual' : 'Trimestral'}
+                              <Text style={[styles.segmentText, { color: tipoPlan === p.id ? '#fff' : theme.textSecondary }]}>
+                                {p.label}
                               </Text>
                             </TouchableOpacity>
                           ))}
@@ -811,32 +938,36 @@ export default function DashboardTab({ atletas, setCurrentTab, onSaveAtleta, onD
                       </View>
 
                       <View style={styles.formGroup}>
-                        <Text style={styles.label}>Fecha Inicio del Periodo Actual (AAAA-MM-DD)</Text>
+                        <Text style={styles.label}>Fecha inicio de suscripción (YYYY-MM-DD)</Text>
                         <TextInput 
-                          style={[styles.input, focusedField === 'fInicio' ? styles.inputFocused : null]}
+                          style={[styles.input, focusedField === 'fechaInicioPlan' ? styles.inputFocused : null]}
                           value={fechaInicioPlan}
                           onChangeText={setFechaInicioPlan}
-                          placeholder="AAAA-MM-DD"
+                          placeholder="2026-09-01"
                           placeholderTextColor={theme.textMuted}
-                          onFocus={() => setFocusedField('fInicio')}
+                          onFocus={() => setFocusedField('fechaInicioPlan')}
                           onBlur={() => setFocusedField(null)}
                         />
                       </View>
 
                       <View style={styles.formGroup}>
-                        <Text style={styles.label}>Estado de Pago Inicial</Text>
+                        <Text style={styles.label}>Estado del Pago Actual</Text>
                         <View style={styles.segmentPicker}>
                           <TouchableOpacity
                             style={[styles.segmentBtn, pagado ? { backgroundColor: theme.success } : null]}
                             onPress={() => setPagado(true)}
                           >
-                            <Text style={[styles.segmentText, { color: pagado ? '#fff' : theme.success }]}>Pagado</Text>
+                            <Text style={[styles.segmentText, { color: pagado ? '#fff' : theme.textSecondary }]}>
+                              🟢 Al Día
+                            </Text>
                           </TouchableOpacity>
                           <TouchableOpacity
                             style={[styles.segmentBtn, !pagado ? { backgroundColor: theme.error } : null]}
                             onPress={() => setPagado(false)}
                           >
-                            <Text style={[styles.segmentText, { color: !pagado ? '#fff' : theme.error }]}>Deuda</Text>
+                            <Text style={[styles.segmentText, { color: !pagado ? '#fff' : theme.textSecondary }]}>
+                              🔴 Pendiente / Deuda
+                            </Text>
                           </TouchableOpacity>
                         </View>
                       </View>
@@ -845,127 +976,18 @@ export default function DashboardTab({ atletas, setCurrentTab, onSaveAtleta, onD
 
                   {activeSection === 'Config' && (
                     <View>
-                      <Text style={styles.sectionHeader}>Configuración del sistema</Text>
-                      <Text style={styles.sectionSubtitle}>Dirección y contactos del atleta</Text>
-
-                      <View style={styles.formGroup}>
-                        <Text style={styles.label}>Dirección</Text>
-                        <TextInput 
-                          style={[styles.input, focusedField === 'direccion' ? styles.inputFocused : null]}
-                          value={direccion}
-                          onChangeText={setDireccion}
-                          placeholder="Ej: Av. Vitacura 1234"
-                          placeholderTextColor={theme.textMuted}
-                          onFocus={() => setFocusedField('direccion')}
-                          onBlur={() => setFocusedField(null)}
-                        />
-                      </View>
-
-                      <View style={styles.formRow}>
-                        <View style={styles.formCol}>
-                          <Text style={styles.label}>Ciudad</Text>
-                          <TextInput 
-                            style={[styles.input, focusedField === 'ciudad' ? styles.inputFocused : null]}
-                            value={ciudad}
-                            onChangeText={setCiudad}
-                            placeholder="Ej: Santiago"
-                            placeholderTextColor={theme.textMuted}
-                            onFocus={() => setFocusedField('ciudad')}
-                            onBlur={() => setFocusedField(null)}
-                          />
-                        </View>
-                        <View style={styles.formCol}>
-                          <Text style={styles.label}>Estado/Región</Text>
-                          <TextInput 
-                            style={[styles.input, focusedField === 'estado' ? styles.inputFocused : null]}
-                            value={estadoProvincia}
-                            onChangeText={setEstadoProvincia}
-                            placeholder="Ej: RM"
-                            placeholderTextColor={theme.textMuted}
-                            onFocus={() => setFocusedField('estado')}
-                            onBlur={() => setFocusedField(null)}
-                          />
-                        </View>
-                      </View>
-
-                      <View style={styles.formRow}>
-                        <View style={styles.formCol}>
-                          <Text style={styles.label}>Código Postal</Text>
-                          <TextInput 
-                            style={[styles.input, focusedField === 'postal' ? styles.inputFocused : null]}
-                            value={codigoPostal}
-                            onChangeText={setCodigoPostal}
-                            placeholder="Ej: 7500000"
-                            placeholderTextColor={theme.textMuted}
-                            onFocus={() => setFocusedField('postal')}
-                            onBlur={() => setFocusedField(null)}
-                          />
-                        </View>
-                        <View style={styles.formCol}>
-                          <Text style={styles.label}>País</Text>
-                          <TextInput 
-                            style={[styles.input, focusedField === 'pais' ? styles.inputFocused : null]}
-                            value={pais}
-                            onChangeText={setPais}
-                            placeholder="Ej: Chile"
-                            placeholderTextColor={theme.textMuted}
-                            onFocus={() => setFocusedField('pais')}
-                            onBlur={() => setFocusedField(null)}
-                          />
-                        </View>
-                      </View>
+                      <Text style={styles.sectionHeader}>Preferencias del Sistema</Text>
+                      <Text style={styles.sectionSubtitle}>Zona horaria y notificaciones</Text>
 
                       <View style={styles.formGroup}>
                         <Text style={styles.label}>Zona Horaria</Text>
                         <TextInput 
-                          style={[styles.input, focusedField === 'tz' ? styles.inputFocused : null]}
+                          style={[styles.input, focusedField === 'zonaHoraria' ? styles.inputFocused : null]}
                           value={zonaHoraria}
                           onChangeText={setZonaHoraria}
-                          placeholder="Ej: America/Santiago (GMT-4)"
+                          placeholder="America/Santiago (GMT-4)"
                           placeholderTextColor={theme.textMuted}
-                          onFocus={() => setFocusedField('tz')}
-                          onBlur={() => setFocusedField(null)}
-                        />
-                      </View>
-
-                      <View style={styles.formRow}>
-                        <View style={styles.formCol}>
-                          <Text style={styles.label}>Teléfono Fijo</Text>
-                          <TextInput 
-                            style={[styles.input, focusedField === 'tel' ? styles.inputFocused : null]}
-                            value={telefono}
-                            onChangeText={setTelefono}
-                            placeholder="Ej: 222345678"
-                            placeholderTextColor={theme.textMuted}
-                            keyboardType="phone-pad"
-                            onFocus={() => setFocusedField('tel')}
-                            onBlur={() => setFocusedField(null)}
-                          />
-                        </View>
-                        <View style={styles.formCol}>
-                          <Text style={styles.label}>Teléfono Celular</Text>
-                          <TextInput 
-                            style={[styles.input, focusedField === 'cel' ? styles.inputFocused : null]}
-                            value={celular}
-                            onChangeText={setCelular}
-                            placeholder="Ej: +56998765432"
-                            placeholderTextColor={theme.textMuted}
-                            keyboardType="phone-pad"
-                            onFocus={() => setFocusedField('cel')}
-                            onBlur={() => setFocusedField(null)}
-                          />
-                        </View>
-                      </View>
-
-                      <View style={styles.formGroup}>
-                        <Text style={styles.label}>Fecha de nacimiento</Text>
-                        <TextInput 
-                          style={[styles.input, focusedField === 'nacimiento' ? styles.inputFocused : null]}
-                          value={fechaNacimiento}
-                          onChangeText={setFechaNacimiento}
-                          placeholder="DD/MM/AAAA"
-                          placeholderTextColor={theme.textMuted}
-                          onFocus={() => setFocusedField('nacimiento')}
+                          onFocus={() => setFocusedField('zonaHoraria')}
                           onBlur={() => setFocusedField(null)}
                         />
                       </View>
@@ -976,618 +998,603 @@ export default function DashboardTab({ atletas, setCurrentTab, onSaveAtleta, onD
               </View>
             </View>
 
-            {/* Modal Footer (Guardar, Guardar y cerrar) */}
+            {/* Modal Bottom Actions Footer */}
             <View style={styles.modalFooter}>
               <TouchableOpacity 
-                activeOpacity={0.8}
-                style={styles.btnSave}
-                onPress={() => handleSave(false)}
-              >
-                <Text style={styles.btnSaveText}>Guardar</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity 
-                activeOpacity={0.8}
-                style={styles.btnSaveClose}
+                style={styles.btnSaveAndClose}
                 onPress={() => handleSave(true)}
+                activeOpacity={0.8}
               >
-                <Text style={styles.btnSaveCloseText}>Guardar y cerrar</Text>
+                <Ionicons name="checkmark-circle" size={16} color="#fff" style={{ marginRight: 6 }} />
+                <Text style={styles.btnSaveText}>Guardar y cerrar</Text>
               </TouchableOpacity>
+              
+              {!editingAthlete && (
+                <TouchableOpacity 
+                  style={styles.btnSaveAndNew}
+                  onPress={() => handleSave(false)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.btnSaveAndNewText}>Guardar y agregar otro</Text>
+                </TouchableOpacity>
+              )}
             </View>
+
           </KeyboardAvoidingView>
         </View>
       </Modal>
+
     </View>
   );
 }
 
-const getStyles = (theme) => StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: theme.background,
-    padding: 16,
-  },
-  contentContainer: {
-    paddingBottom: 40,
-  },
-  welcomeBox: {
-    marginBottom: 16,
-  },
-  welcomeTitle: {
-    fontSize: 20,
-    fontWeight: '900',
-    color: theme.text,
-  },
-  welcomeSubtitle: {
-    fontSize: 12,
-    color: theme.textSecondary,
-    marginTop: 4,
-    fontWeight: '550',
-  },
-  kpiGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 14,
-  },
-  kpiCard: {
-    flex: 1,
-    minWidth: '47%',
-    backgroundColor: theme.surface,
-    borderWidth: 1,
-    borderColor: theme.border,
-    borderRadius: 18,
-    padding: 14,
-    shadowColor: theme.shadowColor,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: theme.shadowOpacity,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  kpiCardFull: {
-    width: '100%',
-    backgroundColor: theme.surface,
-    borderWidth: 1,
-    borderRadius: 18,
-    padding: 14,
-    shadowColor: theme.shadowColor,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: theme.shadowOpacity,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  kpiHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  kpiLabel: {
-    fontSize: 9,
-    color: theme.textSecondary,
-    fontWeight: '800',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  kpiIconCircle: {
-    width: 28,
-    height: 28,
-    borderRadius: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  kpiValue: {
-    fontSize: 22,
-    fontWeight: '900',
-    color: theme.text,
-  },
-  kpiSubtext: {
-    fontSize: 10,
-    color: theme.textMuted,
-    marginTop: 4,
-    fontWeight: '550',
-  },
-  progressRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginTop: 6,
-  },
-  progressBarBg: {
-    flex: 1,
-    height: 6,
-    backgroundColor: theme.surfaceSecondary,
-    borderRadius: 3,
-    overflow: 'hidden',
-  },
-  progressBarFill: {
-    height: '100%',
-    borderRadius: 3,
-  },
-  progressPercentText: {
-    fontSize: 10,
-    fontWeight: '900',
-  },
-  sectionTitle: {
-    fontSize: 11,
-    fontWeight: '900',
-    color: theme.primary,
-    textTransform: 'uppercase',
-    borderLeftWidth: 3,
-    borderLeftColor: theme.primary,
-    paddingLeft: 8,
-    marginTop: 20,
-    marginBottom: 10,
-    letterSpacing: 0.8,
-  },
-  card: {
-    backgroundColor: theme.surface,
-    borderWidth: 1,
-    borderColor: theme.border,
-    borderRadius: 18,
-    padding: 14,
-    marginBottom: 10,
-    shadowColor: theme.shadowColor,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: theme.shadowOpacity,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  shortcutsRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 16,
-  },
-  shortcutCard: {
-    flex: 1,
-    backgroundColor: theme.surface,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: theme.border,
-    paddingVertical: 14,
-    paddingHorizontal: 6,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: theme.shadowColor,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: theme.shadowOpacity,
-    shadowRadius: 6,
-    elevation: 2,
-  },
-  shortcutIconBox: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  shortcutMainText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: theme.text,
-    textAlign: 'center',
-    letterSpacing: 0.2,
-  },
-  shortcutSubText: {
-    fontSize: 10,
-    fontWeight: '500',
-    color: theme.textSecondary,
-    textAlign: 'center',
-    marginTop: 1,
-  },
-  progressItemRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 10,
-  },
-  progressItemInfo: {
-    flex: 1.2,
-  },
-  progressItemName: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: theme.text,
-  },
-  progressItemStatus: {
-    fontSize: 10,
-    marginTop: 2,
-    fontWeight: '550',
-  },
-  progressItemBarCol: {
-    flex: 1.8,
-  },
-  emptyText: {
-    fontSize: 12,
-    textAlign: 'center',
-    paddingVertical: 10,
-    fontWeight: '550',
-  },
-  agendaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-  },
-  agendaIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
-    borderWidth: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  agendaRaceName: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: theme.text,
-  },
-  agendaAthleteName: {
-    fontSize: 10,
-    color: theme.textSecondary,
-    marginTop: 2,
-    fontWeight: '500',
-  },
-  agendaCountdown: {
-    paddingVertical: 5,
-    paddingHorizontal: 8,
-    borderRadius: 8,
-  },
-  agendaCountdownText: {
-    fontSize: 10,
-    fontWeight: '800',
-  },
-  feedContainer: {
-    gap: 8,
-  },
-  feedCard: {
-    borderWidth: 1,
-    borderRadius: 14,
-    padding: 12,
-    shadowColor: theme.shadowColor,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: theme.shadowOpacity,
-    shadowRadius: 4,
-  },
-  feedHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  feedIconBg: {
-    width: 24,
-    height: 24,
-    borderRadius: 6,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  feedAthleteName: {
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  feedLogDate: {
-    fontSize: 9,
-    color: theme.textMuted,
-    fontWeight: '500',
-  },
-  feedDescription: {
-    fontSize: 11,
-    lineHeight: 16,
-    fontWeight: '550',
-  },
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.45)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 16,
-  },
-  modalSheet: {
-    backgroundColor: theme.background,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: theme.border,
-    width: Platform.OS === 'web' ? '70%' : '100%',
-    height: Platform.OS === 'web' ? '85%' : '90%',
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.15,
-    shadowRadius: 15,
-    elevation: 10,
-  },
-  modalHeader: {
-    height: 52,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.border,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    backgroundColor: theme.surface,
-  },
-  modalTitle: {
-    fontSize: 14,
-    fontWeight: '750',
-    color: theme.text,
-  },
-  modalCloseBtn: {
-    padding: 6,
-  },
-  modalBody: {
-    flex: 1,
-    flexDirection: 'column',
-  },
-  modalTabsRow: {
-    flexDirection: 'row',
-    borderBottomWidth: 1,
-    borderBottomColor: theme.border,
-    backgroundColor: theme.surfaceSecondary,
-    padding: 8,
-    gap: 8,
-  },
-  modalTabBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    height: 34,
-    borderRadius: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: theme.border,
-    backgroundColor: theme.surface,
-  },
-  modalTabBtnActive: {
-    backgroundColor: theme.primary,
-    borderColor: theme.primary,
-  },
-  modalTabBtnText: {
-    fontSize: 11,
-    fontWeight: '750',
-    color: theme.textSecondary,
-  },
-  modalTabBtnTextActive: {
-    color: '#fff',
-  },
-  modalContent: {
-    flex: 1,
-    backgroundColor: theme.surface,
-  },
-  scrollContent: {
-    padding: 20,
-    paddingBottom: 40,
-  },
-  sectionHeader: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: theme.text,
-    marginBottom: 4,
-    textTransform: 'uppercase',
-  },
-  sectionSubtitle: {
-    fontSize: 11,
-    color: theme.textMuted,
-    marginBottom: 16,
-  },
-  formRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 12,
-  },
-  formCol: {
-    flex: 1,
-  },
-  formGroup: {
-    marginBottom: 12,
-  },
-  label: {
-    fontSize: 11,
-    fontWeight: '750',
-    color: theme.textSecondary,
-    textTransform: 'uppercase',
-    marginBottom: 6,
-  },
-  input: {
-    height: 38,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: theme.border,
-    backgroundColor: theme.background,
-    paddingHorizontal: 12,
-    color: theme.text,
-    fontSize: 12.5,
-  },
-  inputFocused: {
-    borderColor: theme.primary,
-  },
-  photoSection: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 16,
-    marginBottom: 16,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: theme.border,
-    borderRadius: 12,
-    backgroundColor: theme.background,
-  },
-  photoBox: {
-    width: 68,
-    height: 68,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: theme.border,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: theme.surfaceSecondary,
-    overflow: 'hidden',
-  },
-  photoBoxText: {
-    fontSize: 22,
-  },
-  photoActions: {
-    flex: 1,
-    gap: 8,
-  },
-  photoBtn: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: theme.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  photoBtnText: {
-    fontSize: 10,
-    fontWeight: '750',
-    color: theme.textSecondary,
-  },
-  segmentPicker: {
-    flexDirection: 'row',
-    borderWidth: 1,
-    borderColor: theme.border,
-    borderRadius: 10,
-    backgroundColor: theme.surfaceSecondary,
-    padding: 2,
-    height: 36,
-  },
-  segmentBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: 8,
-  },
-  segmentText: {
-    fontSize: 10.5,
-    fontWeight: '750',
-  },
-  modalFooter: {
-    height: 60,
-    borderTopWidth: 1,
-    borderTopColor: theme.border,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    gap: 10,
-    backgroundColor: theme.surface,
-  },
-  btnSave: {
-    flex: 1,
-    height: 40,
-    borderRadius: 10,
-    backgroundColor: theme.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  btnSaveText: {
-    fontSize: 12,
-    fontWeight: '750',
-    color: '#fff',
-  },
-  btnSaveClose: {
-    flex: 1.2,
-    height: 40,
-    borderRadius: 10,
-    backgroundColor: '#10b981',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  btnSaveCloseText: {
-    fontSize: 12,
-    fontWeight: '750',
-    color: '#fff',
-  },
-  btnAddQuick: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: theme.primary,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 12,
-    shadowColor: theme.primary,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-    elevation: 3,
-  },
-  btnAddQuickText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  sectionHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 16,
-    marginBottom: 10,
-  },
-  linkHeaderBtn: {
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-  },
-  linkHeaderText: {
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  athleteCardRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 10,
-  },
-  athleteAvatar: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 10,
-  },
-  athleteAvatarText: {
-    fontSize: 13,
-    fontWeight: '800',
-  },
-  athleteInfoCol: {
-    flex: 1,
-  },
-  athleteNameText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: theme.text,
-  },
-  athleteSubDetails: {
-    fontSize: 10.5,
-    color: theme.textSecondary,
-    marginTop: 2,
-    fontWeight: '500',
-  },
-  statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-    marginRight: 8,
-  },
-  statusBadgePaid: {
-    backgroundColor: 'rgba(16, 185, 129, 0.12)',
-  },
-  statusBadgeDebt: {
-    backgroundColor: 'rgba(239, 68, 68, 0.12)',
-  },
-  statusBadgeText: {
-    fontSize: 10,
-    fontWeight: '800',
-  },
-  athleteActionBtns: {
-    flexDirection: 'row',
-    gap: 6,
-  },
-  miniActionBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 8,
-    borderWidth: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-});
+const getStyles = (theme) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.background,
+    },
+    contentContainer: {
+      paddingHorizontal: 16,
+      paddingTop: 14,
+      paddingBottom: 40,
+    },
+    welcomeBox: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 16,
+    },
+    welcomeTitle: {
+      fontSize: 20,
+      fontWeight: '900',
+      color: theme.text,
+      letterSpacing: 0.3,
+    },
+    welcomeSubtitle: {
+      fontSize: 12,
+      color: theme.textSecondary,
+      marginTop: 2,
+    },
+    btnAddQuick: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: theme.primary,
+      paddingHorizontal: 12,
+      paddingVertical: 7,
+      borderRadius: 12,
+      shadowColor: theme.primary,
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.25,
+      shadowRadius: 4,
+      elevation: 2,
+    },
+    btnAddQuickText: {
+      color: '#fff',
+      fontSize: 12,
+      fontWeight: '800',
+    },
+    kpiGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 10,
+      marginBottom: 18,
+    },
+    kpiCard: {
+      flex: 1,
+      minWidth: '47%',
+      backgroundColor: theme.surface,
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderRadius: 18,
+      padding: 14,
+      shadowColor: theme.shadowColor,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: theme.shadowOpacity,
+      shadowRadius: 8,
+      elevation: 2,
+    },
+    kpiCardFull: {
+      width: '100%',
+      backgroundColor: theme.surface,
+      borderWidth: 1,
+      borderRadius: 18,
+      padding: 14,
+      shadowColor: theme.shadowColor,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: theme.shadowOpacity,
+      shadowRadius: 8,
+      elevation: 2,
+    },
+    kpiHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 6,
+    },
+    kpiLabel: {
+      fontSize: 10,
+      fontWeight: '800',
+      color: theme.textSecondary,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
+    kpiIconCircle: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    kpiValue: {
+      fontSize: 20,
+      fontWeight: '900',
+      color: theme.text,
+      letterSpacing: 0.3,
+    },
+    kpiSubtext: {
+      fontSize: 10,
+      color: theme.textMuted,
+      marginTop: 2,
+    },
+    progressRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginTop: 8,
+      gap: 10,
+    },
+    progressBarBg: {
+      flex: 1,
+      height: 6,
+      backgroundColor: theme.surfaceSecondary,
+      borderRadius: 3,
+      overflow: 'hidden',
+    },
+    progressBarFill: {
+      height: '100%',
+      borderRadius: 3,
+    },
+    progressPercentText: {
+      fontSize: 11,
+      fontWeight: '800',
+    },
+    sectionTitle: {
+      fontSize: 13,
+      fontWeight: '900',
+      color: theme.text,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+      marginTop: 8,
+      marginBottom: 10,
+    },
+    shortcutsRow: {
+      flexDirection: 'row',
+      gap: 8,
+      marginBottom: 18,
+    },
+    shortcutCard: {
+      flex: 1,
+      backgroundColor: theme.surface,
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderRadius: 16,
+      paddingVertical: 12,
+      alignItems: 'center',
+      shadowColor: theme.shadowColor,
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: theme.shadowOpacity,
+      shadowRadius: 4,
+      elevation: 1,
+    },
+    shortcutIconBox: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: 6,
+    },
+    shortcutMainText: {
+      fontSize: 11,
+      fontWeight: '800',
+      color: theme.text,
+    },
+    shortcutSubText: {
+      fontSize: 9,
+      color: theme.textSecondary,
+    },
+    sectionHeaderRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginTop: 8,
+      marginBottom: 10,
+    },
+    linkHeaderBtn: {
+      paddingVertical: 4,
+      paddingHorizontal: 8,
+    },
+    linkHeaderText: {
+      fontSize: 12,
+      fontWeight: '800',
+    },
+    card: {
+      backgroundColor: theme.surface,
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderRadius: 20,
+      padding: 14,
+      marginBottom: 18,
+      shadowColor: theme.shadowColor,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: theme.shadowOpacity,
+      shadowRadius: 8,
+      elevation: 2,
+    },
+    athleteCardRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 10,
+    },
+    athleteAvatar: {
+      width: 38,
+      height: 38,
+      borderRadius: 19,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: 10,
+    },
+    athleteAvatarText: {
+      fontSize: 13,
+      fontWeight: '900',
+    },
+    athleteInfoCol: {
+      flex: 1,
+    },
+    athleteNameText: {
+      fontSize: 14,
+      fontWeight: '800',
+      color: theme.text,
+    },
+    athleteSubDetails: {
+      fontSize: 11,
+      color: theme.textSecondary,
+      marginTop: 2,
+    },
+    statusBadge: {
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 8,
+      marginRight: 10,
+    },
+    statusBadgePaid: {
+      backgroundColor: theme.successBg,
+    },
+    statusBadgeDebt: {
+      backgroundColor: theme.errorBg,
+    },
+    statusBadgeText: {
+      fontSize: 10,
+      fontWeight: '800',
+    },
+    athleteActionBtns: {
+      flexDirection: 'row',
+      gap: 6,
+    },
+    miniActionBtn: {
+      width: 30,
+      height: 30,
+      borderRadius: 8,
+      borderWidth: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    emptyText: {
+      fontSize: 12,
+      textAlign: 'center',
+    },
+    progressItemRow: {
+      paddingVertical: 10,
+    },
+    progressItemInfo: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      marginBottom: 6,
+    },
+    progressItemName: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: theme.text,
+    },
+    progressItemStatus: {
+      fontSize: 11,
+      fontWeight: '600',
+    },
+    progressItemBarCol: {
+      height: 6,
+    },
+    agendaRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 10,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+    },
+    agendaIcon: {
+      width: 32,
+      height: 32,
+      borderRadius: 10,
+      borderWidth: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    agendaCompTitle: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: theme.text,
+    },
+    agendaAthleteName: {
+      fontSize: 11,
+      color: theme.textSecondary,
+      marginTop: 2,
+    },
+    agendaDaysBadge: {
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 8,
+    },
+    agendaDaysText: {
+      fontSize: 11,
+      fontWeight: '800',
+    },
+    feedCard: {
+      backgroundColor: theme.surface,
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderRadius: 20,
+      padding: 14,
+      marginBottom: 18,
+    },
+    feedRow: {
+      paddingVertical: 10,
+    },
+    feedHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: 4,
+    },
+    feedIconBox: {
+      width: 24,
+      height: 24,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: 8,
+    },
+    feedAthlete: {
+      fontSize: 12,
+      fontWeight: '800',
+      color: theme.text,
+    },
+    feedLogDate: {
+      fontSize: 10,
+      color: theme.textSecondary,
+    },
+    feedDescription: {
+      fontSize: 11,
+      lineHeight: 16,
+      marginLeft: 32,
+    },
+    modalBackdrop: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.6)',
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 16,
+    },
+    modalSheet: {
+      backgroundColor: theme.surface,
+      borderRadius: 24,
+      width: '100%',
+      maxWidth: 500,
+      maxHeight: '90%',
+      borderWidth: 1,
+      borderColor: theme.border,
+      overflow: 'hidden',
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 10 },
+      shadowOpacity: 0.35,
+      shadowRadius: 18,
+      elevation: 10,
+    },
+    modalHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 18,
+      paddingVertical: 14,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+    },
+    modalTitle: {
+      fontSize: 14,
+      fontWeight: '900',
+      color: theme.text,
+      flex: 1,
+      paddingRight: 10,
+    },
+    modalCloseBtn: {
+      padding: 4,
+    },
+    modalBody: {
+      flexShrink: 1,
+    },
+    modalTabsRow: {
+      flexDirection: 'row',
+      paddingHorizontal: 14,
+      paddingTop: 10,
+      paddingBottom: 6,
+      gap: 6,
+      backgroundColor: theme.surfaceSecondary,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+    },
+    modalTabBtn: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 7,
+      borderRadius: 10,
+    },
+    modalTabBtnActive: {
+      backgroundColor: theme.primary,
+    },
+    modalTabBtnText: {
+      fontSize: 11,
+      fontWeight: '700',
+      color: theme.textSecondary,
+    },
+    modalTabBtnTextActive: {
+      color: '#fff',
+      fontWeight: '900',
+    },
+    modalContent: {
+      maxHeight: 400,
+    },
+    scrollContent: {
+      padding: 16,
+    },
+    sectionHeader: {
+      fontSize: 13,
+      fontWeight: '900',
+      color: theme.text,
+      textTransform: 'uppercase',
+      letterSpacing: 0.4,
+    },
+    sectionSubtitle: {
+      fontSize: 11,
+      color: theme.textSecondary,
+      marginBottom: 12,
+      marginTop: 2,
+    },
+    photoSection: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: 14,
+      gap: 12,
+    },
+    photoBox: {
+      width: 50,
+      height: 50,
+      borderRadius: 25,
+      backgroundColor: theme.surfaceSecondary,
+      borderWidth: 1,
+      borderColor: theme.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    photoBoxText: {
+      fontSize: 22,
+    },
+    photoActions: {
+      flexDirection: 'row',
+      gap: 8,
+    },
+    photoBtn: {
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: theme.border,
+      backgroundColor: theme.surfaceSecondary,
+    },
+    photoBtnText: {
+      fontSize: 11,
+      fontWeight: '700',
+      color: theme.text,
+    },
+    formGroup: {
+      marginBottom: 12,
+    },
+    label: {
+      fontSize: 11,
+      fontWeight: '800',
+      color: theme.textSecondary,
+      marginBottom: 4,
+      textTransform: 'uppercase',
+      letterSpacing: 0.3,
+    },
+    input: {
+      backgroundColor: theme.surfaceSecondary,
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderRadius: 12,
+      paddingHorizontal: 12,
+      paddingVertical: 9,
+      fontSize: 13,
+      color: theme.text,
+      fontWeight: '600',
+    },
+    inputFocused: {
+      borderColor: theme.primary,
+    },
+    segmentPicker: {
+      flexDirection: 'row',
+      backgroundColor: theme.surfaceSecondary,
+      borderRadius: 12,
+      padding: 3,
+      gap: 4,
+    },
+    segmentBtn: {
+      flex: 1,
+      paddingVertical: 7,
+      borderRadius: 9,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    segmentText: {
+      fontSize: 11,
+      fontWeight: '800',
+    },
+    rowTwoCols: {
+      flexDirection: 'row',
+    },
+    modalFooter: {
+      flexDirection: 'row',
+      padding: 14,
+      borderTopWidth: 1,
+      borderTopColor: theme.border,
+      gap: 8,
+      backgroundColor: theme.surface,
+    },
+    btnSaveAndClose: {
+      flex: 1.2,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.primary,
+      paddingVertical: 12,
+      borderRadius: 12,
+    },
+    btnSaveText: {
+      color: '#fff',
+      fontSize: 12,
+      fontWeight: '900',
+    },
+    btnSaveAndNew: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.surfaceSecondary,
+      borderWidth: 1,
+      borderColor: theme.border,
+      paddingVertical: 12,
+      borderRadius: 12,
+    },
+    btnSaveAndNewText: {
+      color: theme.text,
+      fontSize: 11,
+      fontWeight: '800',
+    },
+  });

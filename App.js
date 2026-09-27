@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
@@ -66,6 +66,7 @@ function dayDataKeyMap(sportKey) {
   if (sportKey === 'natacion') return 'natacion';
   if (sportKey === 'ciclismo') return 'ciclismo';
   if (sportKey === 'carrera') return 'carrera';
+  if (sportKey === 'fuerza') return 'fuerza';
   return sportKey;
 }
 
@@ -451,6 +452,7 @@ function AppContent() {
         const totNat = calculateEcosTotalForSport(ecosWeeklyData, 'natacion');
         const totCic = calculateEcosTotalForSport(ecosWeeklyData, 'ciclismo');
         const totCar = calculateEcosTotalForSport(ecosWeeklyData, 'carrera');
+        const totFue = calculateEcosTotalForSport(ecosWeeklyData, 'fuerza');
 
         const historyEntry = {
           id: index !== -1 ? ecosHistory[index].id : Date.now(),
@@ -459,6 +461,7 @@ function AppContent() {
             nat: totNat,
             cic: totCic,
             car: totCar,
+            fue: totFue,
             total: totalEcos
           },
           details: ecosWeeklyData
@@ -478,7 +481,7 @@ function AppContent() {
           id: Date.now(),
           fecha: new Date().toISOString().split('T')[0],
           tipo: 'ECOs',
-          descripcion: `Carga semanal ECOs registrada (${mondayStr}): ${totalEcos.toFixed(2)} ECOs (Nat: ${totNat.toFixed(1)}, Cic: ${totCic.toFixed(1)}, Car: ${totCar.toFixed(1)})`
+          descripcion: `Carga semanal ECOs registrada (${mondayStr}): ${totalEcos.toFixed(1)} ECOs (Nat: ${totNat.toFixed(1)}, Cic: ${totCic.toFixed(1)}, Car: ${totCar.toFixed(1)}, Fue: ${totFue.toFixed(1)})`
         };
 
         return {

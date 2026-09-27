@@ -25,6 +25,8 @@ export async function generatePDFReport(calcCache) {
     return;
   }
 
+  const mesosPeriodos = calcCache.mesosPeriodos || ['General', 'Específico', 'Competitivo'];
+
   // Generate vertical cards for the weekly timeline
   let weeksCardsHtml = '';
   calcCache.fechasColumnas.forEach((fecha, idx) => {
@@ -53,13 +55,15 @@ export async function generatePDFReport(calcCache) {
     const zR = calcCache.zCar[idx] || 'Z2';
     
     const mesoNum = Math.ceil((idx + 1) / 4);
+    const periodoName = mesosPeriodos[mesoNum - 1] || 'General';
+    const periodoLabel = `Período ${periodoName}`;
 
     weeksCardsHtml += `
       <div class="week-card">
         <div class="week-card-header">
           <div class="week-title-row">
             <span class="week-title-text">Semana ${idx + 1}</span>
-            <span class="meso-badge">Meso ${mesoNum}</span>
+            <span class="meso-badge">Meso ${mesoNum} • ${periodoLabel}</span>
           </div>
           <span class="week-date">${fecha}</span>
         </div>
@@ -98,342 +102,365 @@ export async function generatePDFReport(calcCache) {
       });
       compsListHtml += '</ul>';
     }
-    compsSectionHtml = `
-      <div class="section-title">Calendario de Competencias</div>
-      ${compsListHtml}
-    `;
-  }
 
-  // Format feedback section (only if visible and present)
-  let feedbackSectionHtml = '';
-  if (calcCache.showFeedbackInReport !== false && calcCache.feedback && calcCache.feedback.trim() !== '') {
-    feedbackSectionHtml = `
-      <div class="feedback-card">
-        <div class="feedback-title">Observaciones / Feedback del Entrenador</div>
-        <div class="feedback-content">${calcCache.feedback.trim().replace(/\n/g, '<br/>')}</div>
+    compsSectionHtml = `
+      <div class="header-box info-comps">
+        <h3 class="box-title">🏆 Competencias en el Periodo</h3>
+        ${compsListHtml}
       </div>
     `;
   }
 
-  // The full HTML template designed from scratch vertically
+  // Format feedback for header (only if visible and present)
+  let feedbackSectionHtml = '';
+  if (calcCache.showFeedbackInReport !== false && calcCache.feedback && calcCache.feedback.trim().length > 0) {
+    feedbackSectionHtml = `
+      <div class="header-box info-feedback">
+        <h3 class="box-title">📝 Feedback y Recomendaciones del Entrenador</h3>
+        <p style="margin: 0; color: #1e3a8a; line-height: 1.4;">${calcCache.feedback.replace(/\n/g, '<br/>')}</p>
+      </div>
+    `;
+  }
+
   const htmlContent = `
     <!DOCTYPE html>
-    <html>
+    <html lang="es">
       <head>
         <meta charset="utf-8" />
-        <title>Reporte Macrociclo - ${calcCache.atleta}</title>
+        <title>Planificación Macrociclo - ${calcCache.nombreDeportista}</title>
         <style>
-          body {
-            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
-            color: #1f2937;
-            margin: 0;
-            padding: 30px;
-            font-size: 11px;
-            background-color: #fff;
-            line-height: 1.5;
+          @page {
+            size: A4 portrait;
+            margin: 12mm 15mm;
           }
-          .header {
-            border-bottom: 3px solid #2563eb;
-            padding-bottom: 12px;
-            margin-bottom: 20px;
+          * {
+            box-sizing: border-box;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            color: #111827;
+            background-color: #ffffff;
+            font-size: 11px;
+            line-height: 1.35;
+          }
+          
+          /* Header */
+          .doc-header {
             display: flex;
             justify-content: space-between;
-            align-items: flex-end;
+            align-items: flex-start;
+            border-bottom: 2px solid #2563eb;
+            padding-bottom: 10px;
+            margin-bottom: 12px;
           }
-          .header h1 {
+          .title-area h1 {
             margin: 0;
-            font-size: 22px;
-            font-weight: 800;
+            font-size: 18px;
             color: #111827;
+            font-weight: 800;
             text-transform: uppercase;
             letter-spacing: 0.5px;
           }
-          .header h1 span {
-            color: #2563eb;
-          }
-          .header p {
-            margin: 4px 0 0 0;
-            color: #6b7280;
+          .title-area p {
+            margin: 2px 0 0 0;
             font-size: 11px;
+            color: #4b5563;
             font-weight: 500;
           }
-          .logo-side {
+          .brand-logo {
             text-align: right;
-            font-size: 14px;
+          }
+          .brand-name {
+            font-size: 16px;
             font-weight: 900;
             color: #2563eb;
             letter-spacing: 1px;
           }
-          .logo-sub {
+          .brand-sub {
             font-size: 8px;
-            color: #9ca3af;
+            font-weight: 700;
+            color: #6b7280;
             text-transform: uppercase;
-            margin-top: 2px;
           }
-          .info-card {
-            background-color: #f9fafb;
-            border: 1px solid #e5e7eb;
-            border-radius: 12px;
-            padding: 16px;
-            margin-bottom: 24px;
-          }
-          .info-title {
-            font-size: 11px;
-            font-weight: 800;
-            text-transform: uppercase;
-            color: #2563eb;
-            letter-spacing: 0.5px;
-            margin-bottom: 10px;
-          }
+
+          /* Info Grid (Top) */
           .info-grid {
             display: flex;
-            flex-wrap: wrap;
-            gap: 16px;
+            gap: 10px;
+            margin-bottom: 12px;
           }
-          .info-col {
+          .header-box {
             flex: 1;
-            min-width: 200px;
-          }
-          .info-item {
-            margin-bottom: 8px;
-            font-size: 12px;
-          }
-          .info-label {
-            color: #4b5563;
-            font-weight: 700;
-            margin-right: 6px;
-          }
-          .feedback-card {
             background-color: #f8fafc;
             border: 1px solid #e2e8f0;
-            border-left: 4px solid #2563eb;
-            border-radius: 12px;
-            padding: 16px;
-            margin-bottom: 24px;
-            page-break-inside: avoid;
+            border-radius: 8px;
+            padding: 8px 10px;
           }
-          .feedback-title {
+          .box-title {
+            margin: 0 0 6px 0;
+            font-size: 10px;
+            font-weight: 800;
+            color: #2563eb;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid #e2e8f0;
+            padding-bottom: 3px;
+          }
+          .info-table {
+            width: 100%;
+            border-collapse: collapse;
+          }
+          .info-table td {
+            padding: 2px 0;
+            font-size: 10.5px;
+          }
+          .info-table td.label {
+            color: #6b7280;
+            font-weight: 600;
+            width: 50%;
+          }
+          .info-table td.val {
+            color: #111827;
+            font-weight: 700;
+            text-align: right;
+          }
+
+          .info-feedback {
+            background-color: #eff6ff;
+            border-color: #bfdbfe;
+          }
+          .info-feedback .box-title {
+            color: #1d4ed8;
+            border-bottom-color: #dbeafe;
+          }
+          .info-comps {
+            background-color: #fdf2f8;
+            border-color: #fbcfe8;
+          }
+          .info-comps .box-title {
+            color: #be185d;
+            border-bottom-color: #fce7f3;
+          }
+
+          /* Section Title */
+          .section-heading {
             font-size: 11px;
             font-weight: 800;
+            color: #111827;
             text-transform: uppercase;
-            color: #2563eb;
             letter-spacing: 0.5px;
-            margin-bottom: 6px;
-          }
-          .feedback-content {
-            font-size: 11.5px;
-            color: #334155;
-            font-weight: 550;
-            line-height: 1.5;
-          }
-          .section-title {
-            font-size: 12px;
-            text-transform: uppercase;
-            color: #2563eb;
+            margin: 10px 0 6px 0;
             border-left: 3px solid #2563eb;
-            padding-left: 8px;
-            margin: 24px 0 12px 0;
-            font-weight: 800;
-            letter-spacing: 0.5px;
+            padding-left: 6px;
+          }
+
+          /* Weeks Container (Two Columns or clean vertical list) */
+          .weeks-container {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+            margin-bottom: 10px;
           }
           
-          /* Weeks Cards styles */
-          .weeks-container {
-            display: flex;
-            flex-direction: column;
-            gap: 14px;
-          }
+          /* Week Card */
           .week-card {
             background-color: #ffffff;
-            border: 1px solid #e5e7eb;
-            border-radius: 12px;
-            padding: 14px;
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+            padding: 8px;
             page-break-inside: avoid;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+            box-shadow: 0 1px 2px rgba(0,0,0,0.03);
           }
           .week-card-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            border-bottom: 1px solid #f3f4f6;
-            padding-bottom: 8px;
-            margin-bottom: 10px;
+            border-bottom: 1px solid #f1f5f9;
+            padding-bottom: 4px;
+            margin-bottom: 6px;
           }
           .week-title-row {
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 6px;
           }
           .week-title-text {
-            font-size: 13px;
+            font-size: 11px;
             font-weight: 800;
-            color: #111827;
+            color: #0f172a;
           }
           .meso-badge {
-            background-color: #eff6ff;
-            color: #2563eb;
-            border: 1px solid #bfdbfe;
-            padding: 2px 8px;
-            border-radius: 20px;
-            font-size: 9px;
-            font-weight: 700;
+            background-color: #e0e7ff;
+            color: #3730a3;
+            font-size: 8px;
+            font-weight: 800;
+            padding: 1px 5px;
+            border-radius: 4px;
             text-transform: uppercase;
           }
           .week-date {
-            color: #4b5563;
-            font-size: 11px;
+            font-size: 9.5px;
+            color: #64748b;
             font-weight: 600;
           }
+          
           .week-comps-box {
-            margin-bottom: 10px;
+            margin-bottom: 6px;
           }
           .pdf-comp-badge {
-            background-color: #ef4444;
-            color: #ffffff;
-            padding: 3px 8px;
-            border-radius: 6px;
-            font-size: 9px;
-            font-weight: 700;
-            text-transform: uppercase;
             display: inline-block;
+            background-color: #fef2f2;
+            border: 1px solid #fecaca;
+            color: #b91c1c;
+            font-size: 8.5px;
+            font-weight: 800;
+            padding: 2px 6px;
+            border-radius: 4px;
           }
+
           .week-grid {
-            display: flex;
-            gap: 10px;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 4px;
           }
           .sport-col {
-            flex: 1;
-            padding: 10px;
-            border-radius: 8px;
-            text-align: center;
-            border: 1px solid transparent;
+            padding: 4px 6px;
+            border-radius: 6px;
+            display: flex;
+            flex-direction: column;
           }
           .col-swim {
             background-color: #f0f9ff;
-            border-color: #e0f2fe;
+            border: 1px solid #e0f2fe;
           }
           .col-bike {
-            background-color: #ecfdf5;
-            border-color: #d1fae5;
+            background-color: #f0fdf4;
+            border: 1px solid #dcfce7;
           }
           .col-run {
             background-color: #fff7ed;
-            border-color: #ffedd5;
-          }
-          .sport-label {
-            display: block;
-            font-size: 10px;
-            font-weight: 800;
-            text-transform: uppercase;
-            margin-bottom: 4px;
-          }
-          .col-swim .sport-label { color: #0369a1; }
-          .col-bike .sport-label { color: #047857; }
-          .col-run .sport-label { color: #c2410c; }
-          
-          .sport-val {
-            display: block;
-            font-size: 13px;
-            font-weight: 900;
-            color: #111827;
-            margin-bottom: 2px;
-          }
-          .sport-zone {
-            display: inline-block;
-            font-size: 9px;
-            font-weight: 700;
-            padding: 2px 6px;
-            background-color: #ffffff;
-            border-radius: 4px;
-            border: 1px solid #e5e7eb;
-            color: #4b5563;
-          }
-          .pdf-comps-list {
-            padding-left: 20px;
-            margin: 5px 0;
-            font-size: 12px;
-          }
-          .pdf-comps-list li {
-            margin-bottom: 4px;
-          }
-          
-          .footer {
-            margin-top: 40px;
-            border-top: 1px solid #e5e7eb;
-            padding-top: 12px;
-            text-align: center;
-            color: #9ca3af;
-            font-size: 9px;
-            font-weight: 550;
+            border: 1px solid #ffedd5;
           }
 
-          @media print {
-            body {
-              padding: 0;
-            }
-            .week-card {
-              -webkit-print-color-adjust: exact;
-              print-color-adjust: exact;
-            }
-            .meso-badge {
-              -webkit-print-color-adjust: exact;
-              print-color-adjust: exact;
-            }
-            .pdf-comp-badge {
-              -webkit-print-color-adjust: exact;
-              print-color-adjust: exact;
-            }
-            .sport-col {
-              -webkit-print-color-adjust: exact;
-              print-color-adjust: exact;
-            }
+          .sport-label {
+            font-size: 8px;
+            font-weight: 700;
+            text-transform: uppercase;
+            margin-bottom: 2px;
+          }
+          .col-swim .sport-label { color: #0369a1; }
+          .col-bike .sport-label { color: #15803d; }
+          .col-run .sport-label { color: #c2410c; }
+
+          .sport-val {
+            font-size: 11px;
+            font-weight: 800;
+            color: #0f172a;
+          }
+          .sport-zone {
+            font-size: 7.5px;
+            font-weight: 700;
+            margin-top: 1px;
+          }
+          .col-swim .sport-zone { color: #0284c7; }
+          .col-bike .sport-zone { color: #16a34a; }
+          .col-run .sport-zone { color: #ea580c; }
+
+          /* Footer */
+          .doc-footer {
+            margin-top: 10px;
+            border-top: 1px solid #e2e8f0;
+            padding-top: 6px;
+            text-align: center;
+            font-size: 8px;
+            color: #94a3b8;
           }
         </style>
       </head>
       <body>
-        <div class="header">
-          <div>
-            <h1>Planificación de Macrociclo</h1>
-            <p>EPL Triatlón Chile — Control Deportivo Personalizado</p>
+
+        <!-- Header -->
+        <div class="doc-header">
+          <div class="title-area">
+            <h1>Planificación del Macrociclo</h1>
+            <p>EPL Triatlón Chile — Control y Periodización Deportiva</p>
           </div>
-          <div class="logo-side">
-            EPL <span style="color:#111827">TRIATLÓN</span>
-            <div class="logo-sub">Planificación y Rendimiento</div>
+          <div class="brand-logo">
+            <div class="brand-name">EPL TRIATLÓN</div>
+            <div class="brand-sub">High Performance Coaching</div>
           </div>
         </div>
 
-        <div class="info-card">
-          <div class="info-title">Ficha Informativa</div>
-          <div class="info-grid">
-            <div class="info-col">
-              <div class="info-item"><span class="info-label">Deportista:</span> <strong>${calcCache.atleta}</strong></div>
-              <div class="info-item"><span class="info-label">Fecha Inicio:</span> ${calcCache.fechaInicio}</div>
-              <div class="info-item"><span class="info-label">Fecha Fin:</span> ${calcCache.fechaFin}</div>
-            </div>
-            <div class="info-col">
-              <div class="info-item"><span class="info-label">Duración:</span> ${calcCache.semanas} Semanas (${calcCache.mesos} Mesociclos)</div>
-              <div class="info-item"><span class="info-label">Volúmenes Semanales Base:</span></div>
-              <div style="font-size: 11px; color:#4b5563; padding-left:10px;">
-                🏊 Natación: ${calcCache.baseNat || 0} m / semana<br/>
-                🚴 Ciclismo: ${calcCache.baseCic || 0} hrs / semana<br/>
-                🏃 Carrera: ${calcCache.baseCar || 0} hrs / semana
-              </div>
-            </div>
+        <!-- Top Information Blocks -->
+        <div class="info-grid">
+          <!-- Athlete & Dates -->
+          <div class="header-box">
+            <h3 class="box-title">👤 Datos del Deportista</h3>
+            <table class="info-table">
+              <tr>
+                <td class="label">Deportista:</td>
+                <td class="val">${calcCache.nombreDeportista}</td>
+              </tr>
+              <tr>
+                <td class="label">Distancia Objetivo:</td>
+                <td class="val" style="color: #2563eb;">${calcCache.distanciaObjetivo || 'Olímpica'}</td>
+              </tr>
+              <tr>
+                <td class="label">Fecha de Inicio:</td>
+                <td class="val">${calcCache.fechaInicio}</td>
+              </tr>
+              <tr>
+                <td class="label">Fecha de Término:</td>
+                <td class="val">${calcCache.fechaFin}</td>
+              </tr>
+            </table>
+          </div>
+
+          <!-- Macrocycle Structure -->
+          <div class="header-box">
+            <h3 class="box-title">📊 Estructura del Macrociclo</h3>
+            <table class="info-table">
+              <tr>
+                <td class="label">Mesociclos:</td>
+                <td class="val">${calcCache.numMesos} Mesos (${calcCache.totalWeeks} Semanas)</td>
+              </tr>
+              <tr>
+                <td class="label">Vol. Total Nat:</td>
+                <td class="val">${(calcCache.totalMacroSwim / 1000).toFixed(1)} km</td>
+              </tr>
+              <tr>
+                <td class="label">Vol. Total Cic:</td>
+                <td class="val">${(calcCache.totalMacroBikeMin / 60).toFixed(1)} hrs</td>
+              </tr>
+              <tr>
+                <td class="label">Vol. Total Car:</td>
+                <td class="val">${(calcCache.totalMacroRunMin / 60).toFixed(1)} hrs</td>
+              </tr>
+            </table>
           </div>
         </div>
 
+        <!-- Optional Top Sections: Competitions and Coach Feedback -->
         ${compsSectionHtml}
-
         ${feedbackSectionHtml}
 
-        <div class="section-title">Cronograma Semanal de Microciclos</div>
+        <!-- Section Title for Timeline -->
+        <div class="section-heading">Cronograma y Cargas Semanales (Microciclos)</div>
+
+        <!-- Weekly Timeline Cards Grid -->
         <div class="weeks-container">
           ${weeksCardsHtml}
         </div>
 
-        <div class="footer">
-          Reporte generado electrónicamente por la plataforma de EPL Triatlón. Todos los derechos reservados.
+        <!-- Footer -->
+        <div class="doc-footer">
+          Documento oficial generado por la plataforma de entrenamiento de EPL Triatlón Chile. Documento confidencial para uso deportivo.
         </div>
+
       </body>
     </html>
   `;
@@ -444,41 +471,38 @@ export async function generatePDFReport(calcCache) {
       if (printWindow) {
         printWindow.document.write(htmlContent);
         printWindow.document.close();
-        
         setTimeout(() => {
           printWindow.focus();
           printWindow.print();
-        }, 250);
+        }, 300);
       } else {
-        Alert.alert("Ventana emergente bloqueada", "Permite las ventanas emergentes en tu navegador para ver la impresión limpia del PDF.");
+        Alert.alert('Ventana emergente bloqueada', 'Por favor habilita las ventanas emergentes en tu navegador para imprimir.');
       }
     } catch (e) {
-      console.error("Web print error:", e);
-      Alert.alert("Error", "Fallo al abrir ventana de impresión web: " + e.message);
+      console.error('Web print error:', e);
+      Alert.alert('Error', 'Fallo al abrir ventana de impresión web: ' + e.message);
     }
     return;
   }
 
   try {
-    // Generate PDF file on mobile
     const { uri } = await Print.printToFileAsync({
       html: htmlContent,
       base64: false
     });
 
-    // Share on mobile
     const isAvailable = await Sharing.isAvailableAsync();
     if (isAvailable) {
       await Sharing.shareAsync(uri, {
         mimeType: 'application/pdf',
-        dialogTitle: `Planificación Macrociclo de ${calcCache.atleta}`,
+        dialogTitle: `Planificacion - ${calcCache.nombreDeportista}`,
         UTI: 'com.adobe.pdf'
       });
     } else {
-      Alert.alert("Compartir no disponible", "No se puede compartir el PDF en este dispositivo.");
+      Alert.alert("Compartir no disponible", "No se puede compartir el archivo en este dispositivo.");
     }
   } catch (error) {
     console.error("PDF generation error:", error);
-    Alert.alert("Error", "Hubo un error al generar el reporte PDF: " + error.message);
+    Alert.alert("Error", "Hubo un error al generar el PDF: " + error.message);
   }
 }
