@@ -9,7 +9,8 @@ import {
   Alert,
   Platform,
   Keyboard,
-  Modal
+  Modal,
+  Switch
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Print from 'expo-print';
@@ -19,40 +20,46 @@ import { useTheme } from '../theme/ThemeContext';
 const DAYS = ['Lunes', 'Martes', 'Miercoles', 'Jueves', 'Viernes', 'Sabado', 'Domingo'];
 
 const ZONES_INFO = [
-  { id: 1, name: 'Z1', label: 'Recuperación / Aeróbico Ligero', coef: 1, color: '#38bdf8' },
-  { id: 2, name: 'Z2', label: 'Aeróbico Medio / Extensivo', coef: 2, color: '#4ade80' },
-  { id: 3, name: 'Z3', label: 'Aeróbico Intensivo / Tempo', coef: 3, color: '#a3e635' },
-  { id: 4, name: 'Z4', label: 'Umbral Anaeróbico / FTP', coef: 4, color: '#facc15' },
-  { id: 5, name: 'Z5', label: 'VO2 Máx / Consumo Máx O2', coef: 6, color: '#fb923c' },
-  { id: 6, name: 'Z6', label: 'Capacidad Anaeróbica Láctica', coef: 9, color: '#f87171' },
-  { id: 7, name: 'Z7', label: 'Potencia Anaeróbica Láctica', coef: 15, color: '#e11d48' },
-  { id: 8, name: 'Z8', label: 'Potencia Aláctica / Sprint', coef: 50, color: '#a855f7' },
+  { id: 1, name: 'Z1', code: '< AeT', label: 'Por debajo del umbral aeróbico', coef: 1, color: '#38bdf8' },
+  { id: 2, name: 'Z2', code: 'AeT', label: 'Umbral aeróbico', coef: 2, color: '#4ade80' },
+  { id: 3, name: 'Z3', code: 'AeT–AnT', label: 'Entre umbrales / Tempo', coef: 3, color: '#a3e635' },
+  { id: 4, name: 'Z4', code: 'AnT', label: 'Umbral anaeróbico / FTP', coef: 4, color: '#facc15' },
+  { id: 5, name: 'Z5', code: '> AnT', label: 'Entre AnT y pot. aeróbica máx.', coef: 6, color: '#fb923c' },
+  { id: 6, name: 'Z6', code: 'MAP/MAV', label: 'Potencia / vel. aeróbica máxima', coef: 9, color: '#f87171' },
+  { id: 7, name: 'Z7', code: 'LAC Cap', label: 'Capacidad láctica', coef: 15, color: '#e11d48' },
+  { id: 8, name: 'Z8', code: 'LAC Pow', label: 'Potencia láctica / glucolítica', coef: 50, color: '#a855f7' },
 ];
 
-const SPORT_FACTORS = {
+const BASE_SPORT_FACTORS = {
   natacion: 0.75,
   ciclismo: 0.50,
   carrera: 1.00
 };
 
+const TRANSITION_ADDONS = {
+  ciclismo: 0.10, // 0.50 + 0.10 = 0.60
+  carrera: 0.15   // 1.00 + 0.15 = 1.15
+};
+
 const STRENGTH_CATEGORIES = {
   levantamientos: [
-    { id: 1, name: '1 · Monoarticular', factor: 0.08, desc: 'Ej: Curl bíceps, Tríceps polea, Extensiones' },
-    { id: 2, name: '2 · Multiarticular auxiliar', factor: 0.24, desc: 'Ej: Remo mancuerna, Press militar máq.' },
-    { id: 3, name: '3 · Multiarticular', factor: 0.84, desc: 'Ej: Sentadilla, Peso Muerto, Press Banca' },
-    { id: 4, name: '4 · Potencia', factor: 1.12, desc: 'Ej: Cargadas, Arrancadas, Push Press' },
-    { id: 5, name: '5 · Máxima Potencia', factor: 1.50, desc: 'Ej: Levantamiento olímpico máximo' },
+    { id: 1, name: '1 · Monoarticular', factor: 0.08, desc: 'Curl bíceps, tríceps, extensión de rodilla' },
+    { id: 2, name: '2 · Multiarticular auxiliar', factor: 0.24, desc: 'Remo unilateral, prensa unilateral, bandas' },
+    { id: 3, name: '3 · Multiarticular', factor: 0.84, desc: 'Sentadilla, press banca, peso muerto, dominada' },
+    { id: 4, name: '4 · Potencia', factor: 1.12, desc: '1/4 squat, push press, acciones explosivas' },
+    { id: 5, name: '5 · Máxima Potencia', factor: 1.50, desc: 'Snatch, clean, levantamiento olímpico máx.' },
   ],
   saltos: [
-    { id: 1, name: '1 · Monoarticular', factor: 0.08, desc: 'Ej: Tobillos reactivos, Gemelos elásticos' },
-    { id: 2, name: '2 · Multiarticular auxiliar', factor: 0.40, desc: 'Ej: Saltos suaves, Lanzamiento balón liviano' },
-    { id: 3, name: '3 · Multiarticular', factor: 0.84, desc: 'Ej: Salto al cajón, Saltos en largo' },
-    { id: 4, name: '4 · Potencia', factor: 1.36, desc: 'Ej: Saltos con caída (Drop jump), Balón pesado' },
-    { id: 5, name: '5 · Máxima Potencia', factor: 1.90, desc: 'Ej: Pliometría de alto impacto / rebote máximo' },
+    { id: 1, name: '1 · Monoarticular', factor: 0.08, desc: 'Tobillos reactivos, gemelos elásticos' },
+    { id: 2, name: '2 · Multiarticular auxiliar', factor: 0.40, desc: 'Saltos suaves, lanzamiento balón liviano' },
+    { id: 3, name: '3 · Multiarticular', factor: 0.84, desc: 'Salto al cajón, saltos horizontales / multisaltos' },
+    { id: 4, name: '4 · Potencia', factor: 1.36, desc: 'Drop jump (saltos con caída), balón medicinal pesado' },
+    { id: 5, name: '5 · Máxima Potencia', factor: 1.90, desc: 'Pliometría de alto impacto / rebote máximo' },
   ]
 };
 
 const createInitialDaySportState = () => ({
+  isTransition: false,
   zones: {
     1: { min: '', seg: '' },
     2: { min: '', seg: '' },
@@ -141,6 +148,9 @@ export default function EcosTab({ atletas, onSaveEcos }) {
   const [strReps, setStrReps] = useState('8');
   const [strDirectReps, setStrDirectReps] = useState('');
 
+  // Info details accordion modal
+  const [showInfoModal, setShowInfoModal] = useState(false);
+
   const selectedAthlete = (atletas || []).find(a => a.id === selectedAtletaId) || (atletas && atletas[0]) || null;
 
   // Load week ECOs
@@ -159,21 +169,24 @@ export default function EcosTab({ atletas, onSaveEcos }) {
     }
 
     if (loaded) {
-      // Normalize loaded state to ensure 8 zones and fuerza format
       const normalized = createInitialEcosState();
       DAYS.forEach(d => {
         if (loaded[d]) {
           ['natacion', 'ciclismo', 'carrera'].forEach(s => {
             if (loaded[d][s]) {
               if (loaded[d][s].zones) {
-                normalized[d][s] = loaded[d][s];
+                normalized[d][s] = {
+                  isTransition: !!loaded[d][s].isTransition,
+                  zones: loaded[d][s].zones,
+                  totalMin: loaded[d][s].totalMin || 0,
+                  ecos: loaded[d][s].ecos || 0
+                };
               } else if (loaded[d][s].minutos !== undefined) {
-                // Legacy migration
                 const z = parseInt(loaded[d][s].zona) || 2;
                 const m = String(loaded[d][s].minutos || '');
                 const seg = String(loaded[d][s].segundos || '');
                 normalized[d][s].zones[z] = { min: m, seg: seg };
-                const calc = calculateSportEcos(s, normalized[d][s].zones);
+                const calc = calculateSportEcos(s, normalized[d][s].zones, false);
                 normalized[d][s].totalMin = calc.totalMin;
                 normalized[d][s].ecos = calc.ecos;
               }
@@ -205,8 +218,16 @@ export default function EcosTab({ atletas, onSaveEcos }) {
   }, [atletas, selectedAtletaId, activeWeekIndex]);
 
   // Calculation Functions
-  const calculateSportEcos = (sportKey, zonesMap) => {
-    const factor = SPORT_FACTORS[sportKey] || 1.0;
+  const getSportFactor = (sportKey, isTransition) => {
+    let factor = BASE_SPORT_FACTORS[sportKey] || 1.0;
+    if (isTransition && TRANSITION_ADDONS[sportKey]) {
+      factor += TRANSITION_ADDONS[sportKey];
+    }
+    return factor;
+  };
+
+  const calculateSportEcos = (sportKey, zonesMap, isTransition = false) => {
+    const factor = getSportFactor(sportKey, isTransition);
     let totalMin = 0;
     let totalEcos = 0;
     
@@ -251,8 +272,28 @@ export default function EcosTab({ atletas, onSaveEcos }) {
       zoneEntry[field] = value;
       currentZones[zoneId] = zoneEntry;
 
-      const calc = calculateSportEcos(sport, currentZones);
+      const calc = calculateSportEcos(sport, currentZones, sportData.isTransition);
       sportData.zones = currentZones;
+      sportData.totalMin = calc.totalMin;
+      sportData.ecos = calc.ecos;
+
+      dayData[sport] = sportData;
+
+      return {
+        ...prev,
+        [activeDay]: dayData
+      };
+    });
+  };
+
+  const handleToggleTransition = (sport, isTransitionVal) => {
+    setEcosState(prev => {
+      const dayData = { ...prev[activeDay] };
+      const sportData = { ...dayData[sport] };
+
+      sportData.isTransition = isTransitionVal;
+
+      const calc = calculateSportEcos(sport, sportData.zones, isTransitionVal);
       sportData.totalMin = calc.totalMin;
       sportData.ecos = calc.ecos;
 
@@ -293,7 +334,7 @@ export default function EcosTab({ atletas, onSaveEcos }) {
         seg: segundos > 0 ? segundos.toString() : ''
       };
 
-      const calc = calculateSportEcos(sport, currentZones);
+      const calc = calculateSportEcos(sport, currentZones, sportData.isTransition);
       sportData.zones = currentZones;
       sportData.totalMin = calc.totalMin;
       sportData.ecos = calc.ecos;
@@ -396,9 +437,9 @@ export default function EcosTab({ atletas, onSaveEcos }) {
   // Day Totals & Weekly Aggregation
   const getDaySummary = (dayName) => {
     const d = ecosState[dayName] || {};
-    const nat = calculateSportEcos('natacion', d.natacion?.zones);
-    const cic = calculateSportEcos('ciclismo', d.ciclismo?.zones);
-    const car = calculateSportEcos('carrera', d.carrera?.zones);
+    const nat = calculateSportEcos('natacion', d.natacion?.zones, false);
+    const cic = calculateSportEcos('ciclismo', d.ciclismo?.zones, !!d.ciclismo?.isTransition);
+    const car = calculateSportEcos('carrera', d.carrera?.zones, !!d.carrera?.isTransition);
     const fue = calculateStrengthDayEcos(d.fuerza);
 
     const totalEcos = nat.ecos + cic.ecos + car.ecos + fue.ecos;
@@ -411,7 +452,9 @@ export default function EcosTab({ atletas, onSaveEcos }) {
       natMin: nat.totalMin,
       cicMin: cic.totalMin,
       carMin: car.totalMin,
-      fueReps: fue.totalReps
+      fueReps: fue.totalReps,
+      cicIsTransition: !!d.ciclismo?.isTransition,
+      carIsTransition: !!d.carrera?.isTransition
     };
   };
 
@@ -442,7 +485,7 @@ export default function EcosTab({ atletas, onSaveEcos }) {
 
     if (onSaveEcos) {
       onSaveEcos(selectedAtletaId, ecosState, weeklyTotalEcos, weekStartDateStr);
-      Alert.alert('Guardado', `Carga semanal guardada (${weekStartDateStr}): ${weeklyTotalEcos.toFixed(1)} ECOs acumulados (Nat: ${weeklyTotalNatEcos.toFixed(1)}, Cic: ${weeklyTotalCicEcos.toFixed(1)}, Car: ${weeklyTotalCarEcos.toFixed(1)}, Fue: ${weeklyTotalFueEcos.toFixed(1)}).`);
+      Alert.alert('Guardado', `Carga semanal guardada (${weekStartDateStr}): ${weeklyTotalEcos.toFixed(1)} ECOs acumulados.`);
     }
   };
 
@@ -464,10 +507,10 @@ export default function EcosTab({ atletas, onSaveEcos }) {
             ${info.natEcos > 0 ? `<strong>${info.natEcos.toFixed(1)}</strong> <span style="font-size:10px; color:#64748b;">(${Math.round(info.natMin)}m)</span>` : '-'}
           </td>
           <td style="padding: 9px 12px; border-bottom: 1px solid #e2e8f0; color: #16a34a;">
-            ${info.cicEcos > 0 ? `<strong>${info.cicEcos.toFixed(1)}</strong> <span style="font-size:10px; color:#64748b;">(${Math.round(info.cicMin)}m)</span>` : '-'}
+            ${info.cicEcos > 0 ? `<strong>${info.cicEcos.toFixed(1)}</strong> <span style="font-size:10px; color:#64748b;">(${Math.round(info.cicMin)}m${info.cicIsTransition ? ' • Brick' : ''})</span>` : '-'}
           </td>
           <td style="padding: 9px 12px; border-bottom: 1px solid #e2e8f0; color: #ea580c;">
-            ${info.carEcos > 0 ? `<strong>${info.carEcos.toFixed(1)}</strong> <span style="font-size:10px; color:#64748b;">(${Math.round(info.carMin)}m)</span>` : '-'}
+            ${info.carEcos > 0 ? `<strong>${info.carEcos.toFixed(1)}</strong> <span style="font-size:10px; color:#64748b;">(${Math.round(info.carMin)}m${info.carIsTransition ? ' • Brick' : ''})</span>` : '-'}
           </td>
           <td style="padding: 9px 12px; border-bottom: 1px solid #e2e8f0; color: #8b5cf6;">
             ${info.fueEcos > 0 ? `<strong>${info.fueEcos.toFixed(1)}</strong> <span style="font-size:10px; color:#64748b;">(${info.fueReps} reps)</span>` : '-'}
@@ -515,7 +558,7 @@ export default function EcosTab({ atletas, onSaveEcos }) {
           <div class="header-bar">
             <div class="title-area">
               <h1>Informe de Carga ECOs</h1>
-              <p>EPL Triatlón Chile — Cuantificación del Entrenamiento</p>
+              <p>EPL Triatlón Chile — Cuantificación del Entrenamiento (Cejuela &amp; Esteve-Lanao)</p>
             </div>
             <div>
               <div class="brand-name">EPL TRIATLÓN</div>
@@ -562,8 +605,8 @@ export default function EcosTab({ atletas, onSaveEcos }) {
               <tr>
                 <th>Día</th>
                 <th>🏊 Natación (0.75)</th>
-                <th>🚴 Ciclismo (0.50)</th>
-                <th>🏃 Carrera (1.00)</th>
+                <th>🚴 Ciclismo (0.50/0.60)</th>
+                <th>🏃 Carrera (1.00/1.15)</th>
                 <th>🏋️ Fuerza</th>
                 <th style="text-align: right;">Total ECOs</th>
               </tr>
@@ -624,6 +667,9 @@ export default function EcosTab({ atletas, onSaveEcos }) {
   const activeStrengthList = currentDayData.fuerza?.ejercicios || [];
   const activeDaySummary = getDaySummary(activeDay);
 
+  const isCurrentSportTransition = (activeSportTab === 'ciclismo' || activeSportTab === 'carrera') ? !!currentDayData[activeSportTab]?.isTransition : false;
+  const currentSportActiveFactor = getSportFactor(activeSportTab, isCurrentSportTransition);
+
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer} showsVerticalScrollIndicator={false}>
       
@@ -631,11 +677,16 @@ export default function EcosTab({ atletas, onSaveEcos }) {
       <View style={styles.selectorCard}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
           <Text style={styles.label}>SELECCIONAR ATLETA</Text>
-          {selectedAthlete?.distanciaObjetivo ? (
-            <View style={[styles.targetBadge, { backgroundColor: theme.primary + '18', borderColor: theme.primary }]}>
-              <Text style={[styles.targetBadgeText, { color: theme.primary }]}>🎯 {selectedAthlete.distanciaObjetivo}</Text>
-            </View>
-          ) : null}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            {selectedAthlete?.distanciaObjetivo ? (
+              <View style={[styles.targetBadge, { backgroundColor: theme.primary + '18', borderColor: theme.primary }]}>
+                <Text style={[styles.targetBadgeText, { color: theme.primary }]}>🎯 {selectedAthlete.distanciaObjetivo}</Text>
+              </View>
+            ) : null}
+            <TouchableOpacity onPress={() => setShowInfoModal(true)} style={styles.infoIconBtn} activeOpacity={0.7}>
+              <Ionicons name="information-circle-outline" size={18} color={theme.textSecondary} />
+            </TouchableOpacity>
+          </View>
         </View>
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.scroller}>
@@ -691,7 +742,7 @@ export default function EcosTab({ atletas, onSaveEcos }) {
           { id: 'natacion', label: 'Natación', icon: 'water', factor: '0.75', color: theme.swim || '#38bdf8' },
           { id: 'ciclismo', label: 'Ciclismo', icon: 'bicycle', factor: '0.50', color: theme.bike || '#4ade80' },
           { id: 'carrera', label: 'Carrera', icon: 'walk', factor: '1.00', color: theme.run || '#fb923c' },
-          { id: 'fuerza', label: 'Fuerza', icon: 'barbell', factor: 'Exacto', color: '#a855f7' },
+          { id: 'fuerza', label: 'Fuerza', icon: 'barbell', factor: 'Exacto', color: '#8b5cf6' },
         ].map(s => {
           const isSel = activeSportTab === s.id;
           return (
@@ -712,11 +763,12 @@ export default function EcosTab({ atletas, onSaveEcos }) {
       {activeSportTab !== 'fuerza' && (
         <View style={styles.card}>
           <View style={styles.sportCardHeader}>
-            <View>
+            <View style={{ flex: 1, paddingRight: 8 }}>
               <Text style={styles.cardTitle}>
-                {activeSportTab === 'natacion' ? '🏊 NATACIÓN (Factor 0.75)' : activeSportTab === 'ciclismo' ? '🚴 CICLISMO (Factor 0.50)' : '🏃 CARRERA (Factor 1.00)'}
+                {activeSportTab === 'natacion' ? '🏊 NATACIÓN' : activeSportTab === 'ciclismo' ? '🚴 CICLISMO' : '🏃 CARRERA'}
+                <Text style={{ fontSize: 11, fontWeight: '700', color: theme.textSecondary }}> (Factor ×{currentSportActiveFactor.toFixed(2)})</Text>
               </Text>
-              <Text style={styles.cardSubtitle}>Ingresa los minutos realizados en cada zona para el {activeDay}:</Text>
+              <Text style={styles.cardSubtitle}>Ingresa los minutos en cada zona para el {activeDay}:</Text>
             </View>
 
             {(activeSportTab === 'natacion' || activeSportTab === 'carrera') && (
@@ -731,13 +783,35 @@ export default function EcosTab({ atletas, onSaveEcos }) {
             )}
           </View>
 
+          {/* TRANSITION (BRICK) SWITCH FOR BIKE AND RUN */}
+          {(activeSportTab === 'ciclismo' || activeSportTab === 'carrera') && (
+            <View style={[styles.transitionBox, isCurrentSportTransition ? { borderColor: theme.primary, backgroundColor: theme.primary + '12' } : null]}>
+              <View style={{ flex: 1, paddingRight: 10 }}>
+                <Text style={[styles.transitionTitle, isCurrentSportTransition && { color: theme.primary }]}>
+                  {activeSportTab === 'ciclismo' ? '🚴 Ciclismo en Transición (Brick)' : '🏃 Carrera en Transición (Brick post-bici)'}
+                </Text>
+                <Text style={styles.transitionSub}>
+                  {activeSportTab === 'ciclismo'
+                    ? 'Suma +0.10 al factor (×0.50 ➔ ×0.60) por ser segundo segmento'
+                    : 'Suma +0.15 al factor (×1.00 ➔ ×1.15) por ser segundo segmento'}
+                </Text>
+              </View>
+              <Switch
+                value={isCurrentSportTransition}
+                onValueChange={(val) => handleToggleTransition(activeSportTab, val)}
+                trackColor={{ false: theme.border, true: theme.primary }}
+                thumbColor="#fff"
+              />
+            </View>
+          )}
+
           {/* 8 ZONES GRID */}
           <View style={styles.zonesTable}>
             <View style={styles.zonesTableHeader}>
-              <Text style={[styles.zonesTh, { flex: 1.2 }]}>ZONA</Text>
-              <Text style={[styles.zonesTh, { flex: 1.8 }]}>DESCRIPCIÓN</Text>
-              <Text style={[styles.zonesTh, { flex: 0.8, textAlign: 'center' }]}>COEF</Text>
-              <Text style={[styles.zonesTh, { flex: 1.4, textAlign: 'center' }]}>MINUTOS</Text>
+              <Text style={[styles.zonesTh, { flex: 1.1 }]}>ZONA</Text>
+              <Text style={[styles.zonesTh, { flex: 2.1 }]}>INTENSIDAD / UMBRAL</Text>
+              <Text style={[styles.zonesTh, { flex: 0.7, textAlign: 'center' }]}>COEF</Text>
+              <Text style={[styles.zonesTh, { flex: 1.3, textAlign: 'center' }]}>MINUTOS</Text>
               <Text style={[styles.zonesTh, { flex: 1.1, textAlign: 'right' }]}>ECOS</Text>
             </View>
 
@@ -745,7 +819,7 @@ export default function EcosTab({ atletas, onSaveEcos }) {
               const zoneData = currentDayData[activeSportTab]?.zones?.[z.id] || { min: '', seg: '' };
               const m = parseFloat(zoneData.min) || 0;
               const s = parseFloat(zoneData.seg) || 0;
-              const factor = SPORT_FACTORS[activeSportTab] || 1.0;
+              const factor = currentSportActiveFactor;
               const zEcos = (m + s/60) * z.coef * factor;
 
               return (
@@ -754,9 +828,12 @@ export default function EcosTab({ atletas, onSaveEcos }) {
                     <Text style={[styles.zoneBadgeText, { color: z.color }]}>{z.name}</Text>
                   </View>
 
-                  <Text style={styles.zoneDescText} numberOfLines={1}>{z.label}</Text>
+                  <View style={{ flex: 2.1 }}>
+                    <Text style={styles.zoneCodeText}>{z.code}</Text>
+                    <Text style={styles.zoneDescText} numberOfLines={1}>{z.label}</Text>
+                  </View>
                   
-                  <Text style={styles.zoneCoefText}>x{z.coef}</Text>
+                  <Text style={styles.zoneCoefText}>×{z.coef}</Text>
 
                   <View style={styles.zoneInputWrap}>
                     <TextInput
@@ -798,7 +875,7 @@ export default function EcosTab({ atletas, onSaveEcos }) {
         <View style={styles.card}>
           <View style={styles.sportCardHeader}>
             <View>
-              <Text style={[styles.cardTitle, { color: '#8b5cf6' }]}>🏋️ FUERZA Y POTENCIA</Text>
+              <Text style={[styles.cardTitle, { color: '#8b5cf6' }]}>🏋️ FUERZA Y POTENCIA (Esteve-Lanao)</Text>
               <Text style={styles.cardSubtitle}>Levantamientos, Saltos y Lanzamientos con factores exactos:</Text>
             </View>
             <TouchableOpacity
@@ -817,7 +894,7 @@ export default function EcosTab({ atletas, onSaveEcos }) {
               {activeStrengthList.map((ej) => (
                 <View key={ej.id} style={styles.strengthItemCard}>
                   <View style={{ flex: 1 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
                       <Text style={styles.strengthItemName}>{ej.nombre}</Text>
                       <View style={[styles.strengthCatBadge, { backgroundColor: '#8b5cf6' + '18', borderColor: '#8b5cf6' + '40' }]}>
                         <Text style={[styles.strengthCatBadgeText, { color: '#8b5cf6' }]}>{ej.categoriaNombre}</Text>
@@ -986,7 +1063,7 @@ export default function EcosTab({ atletas, onSaveEcos }) {
                         <Text style={styles.catDesc}>{cat.desc}</Text>
                       </View>
                       <View style={[styles.catFactorBadge, isSel ? { backgroundColor: theme.primary } : null]}>
-                        <Text style={[styles.catFactorText, isSel ? { color: '#fff' } : null]}>x{cat.factor}</Text>
+                        <Text style={[styles.catFactorText, isSel ? { color: '#fff' } : null]}>×{cat.factor}</Text>
                       </View>
                     </TouchableOpacity>
                   );
@@ -1128,6 +1205,48 @@ export default function EcosTab({ atletas, onSaveEcos }) {
         </View>
       </Modal>
 
+      {/* MODAL: INFO & METHODOLOGY */}
+      <Modal visible={showInfoModal} transparent animationType="fade" onRequestClose={() => setShowInfoModal(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Metodología ECOs (Cejuela &amp; Esteve-Lanao)</Text>
+              <TouchableOpacity onPress={() => setShowInfoModal(false)} activeOpacity={0.7}>
+                <Ionicons name="close" size={22} color={theme.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ maxHeight: 400 }} showsVerticalScrollIndicator={false}>
+              <Text style={[styles.label, { color: theme.primary }]}>1. RESISTENCIA</Text>
+              <Text style={styles.infoMethodologyText}>
+                La carga se calcula sumando los minutos realizados en cada una de las 8 zonas multiplicado por el coeficiente de zona y el factor del deporte:
+              </Text>
+              <Text style={styles.infoMethodologyText}>
+                • <Text style={{ fontWeight: '800' }}>Natación:</Text> factor ×0.75{'\n'}
+                • <Text style={{ fontWeight: '800' }}>Ciclismo:</Text> factor ×0.50 (en transición / brick: ×0.60){'\n'}
+                • <Text style={{ fontWeight: '800' }}>Carrera:</Text> factor ×1.00 (en transición / brick: ×1.15){'\n'}
+                • <Text style={{ fontWeight: '800' }}>Coeficientes de Zona:</Text> Z1=1, Z2=2, Z3=3, Z4=4, Z5=6, Z6=9, Z7=15, Z8=50.
+              </Text>
+
+              <Text style={[styles.label, { color: '#8b5cf6', marginTop: 12 }]}>2. FUERZA Y POTENCIA</Text>
+              <Text style={styles.infoMethodologyText}>
+                Carga = Factor de Categoría × Repeticiones Totales (Series × Reps):
+              </Text>
+              <Text style={styles.infoMethodologyText}>
+                • <Text style={{ fontWeight: '800' }}>Levantamientos:</Text> Monoarticular (0.08), Multiarticular aux (0.24), Multiarticular (0.84), Potencia (1.12), Máx Potencia (1.50).{'\n'}
+                • <Text style={{ fontWeight: '800' }}>Saltos/Lanzamientos:</Text> Monoarticular (0.08), Multiarticular aux (0.40), Multiarticular (0.84), Potencia (1.36), Máx Potencia (1.90).
+              </Text>
+            </ScrollView>
+
+            <View style={{ marginTop: 12 }}>
+              <TouchableOpacity style={styles.btnCancel} onPress={() => setShowInfoModal(false)}>
+                <Text style={styles.btnCancelText}>Cerrar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
     </ScrollView>
   );
 }
@@ -1184,6 +1303,9 @@ const getStyles = (theme) =>
     targetBadgeText: {
       fontSize: 10,
       fontWeight: '800',
+    },
+    infoIconBtn: {
+      padding: 2,
     },
     scroller: {
       gap: 8,
@@ -1272,7 +1394,7 @@ const getStyles = (theme) =>
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
-      marginBottom: 12,
+      marginBottom: 10,
     },
     cardTitle: {
       fontSize: 13,
@@ -1284,6 +1406,27 @@ const getStyles = (theme) =>
       fontSize: 11,
       color: theme.textSecondary,
       marginTop: 2,
+    },
+    transitionBox: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      backgroundColor: theme.surfaceSecondary,
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderRadius: 12,
+      padding: 10,
+      marginBottom: 12,
+    },
+    transitionTitle: {
+      fontSize: 11.5,
+      fontWeight: '800',
+      color: theme.text,
+    },
+    transitionSub: {
+      fontSize: 10,
+      color: theme.textSecondary,
+      marginTop: 1,
     },
     converterQuickBtn: {
       flexDirection: 'row',
@@ -1331,7 +1474,7 @@ const getStyles = (theme) =>
       borderBottomColor: theme.border,
     },
     zoneBadge: {
-      flex: 1.2,
+      flex: 1.1,
       borderWidth: 1,
       paddingVertical: 3,
       paddingHorizontal: 6,
@@ -1344,21 +1487,24 @@ const getStyles = (theme) =>
       fontSize: 10.5,
       fontWeight: '900',
     },
+    zoneCodeText: {
+      fontSize: 10.5,
+      fontWeight: '800',
+      color: theme.text,
+    },
     zoneDescText: {
-      flex: 1.8,
-      fontSize: 10,
+      fontSize: 9,
       color: theme.textSecondary,
-      fontWeight: '600',
     },
     zoneCoefText: {
-      flex: 0.8,
+      flex: 0.7,
       fontSize: 10,
       fontWeight: '800',
       color: theme.textMuted,
       textAlign: 'center',
     },
     zoneInputWrap: {
-      flex: 1.4,
+      flex: 1.3,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
@@ -1762,5 +1908,11 @@ const getStyles = (theme) =>
       fontSize: 11,
       fontWeight: '800',
       color: theme.textSecondary,
+    },
+    infoMethodologyText: {
+      fontSize: 11.5,
+      lineHeight: 16,
+      color: theme.textSecondary,
+      marginBottom: 6,
     },
   });
