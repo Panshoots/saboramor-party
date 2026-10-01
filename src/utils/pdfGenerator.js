@@ -1,3 +1,4 @@
+import { parseFlexibleDate, formatDateChile } from './dateUtils';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { Alert, Platform } from 'react-native';
@@ -38,10 +39,17 @@ export async function generatePDFReport(calcCache) {
       const startOfWeek = new Date(year, month - 1, day);
       const endOfWeek = new Date(startOfWeek.getTime() + 6 * 24 * 60 * 60 * 1000);
 
+      startOfWeek.setHours(0, 0, 0, 0);
+      const endOfWeekLimit = new Date(endOfWeek);
+      endOfWeekLimit.setHours(23, 59, 59, 999);
+
       calcCache.competencias.forEach(comp => {
-        const compDate = new Date(comp.fecha + 'T00:00:00');
-        if (compDate >= startOfWeek && compDate <= endOfWeek) {
-          weekCompHtml += `<span class="pdf-comp-badge">🏆 COMPETENCIA: ${comp.nombre}</span>`;
+        const compDate = parseFlexibleDate(comp.fecha);
+        if (compDate) {
+          compDate.setHours(0, 0, 0, 0);
+          if (compDate >= startOfWeek && compDate <= endOfWeekLimit) {
+            weekCompHtml += `<span class="pdf-comp-badge">🏆 COMPETENCIA: ${comp.nombre}</span>`;
+          }
         }
       });
     }
@@ -96,8 +104,7 @@ export async function generatePDFReport(calcCache) {
     if (calcCache.competencias && calcCache.competencias.length > 0) {
       compsListHtml = '<ul class="pdf-comps-list" style="margin: 0; padding-left: 20px;">';
       calcCache.competencias.forEach(c => {
-        const parts = c.fecha.split('-');
-        const formattedDate = parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : c.fecha;
+        const formattedDate = formatDateChile(c.fecha);
         compsListHtml += `<li><strong>🏆 ${c.nombre}</strong> - ${formattedDate}</li>`;
       });
       compsListHtml += '</ul>';

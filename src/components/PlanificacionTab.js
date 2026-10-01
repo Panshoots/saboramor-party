@@ -1,3 +1,4 @@
+import { parseFlexibleDate, normalizeDateToISO, formatDateChile, getDaysRemaining } from '../utils/dateUtils';
 import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
@@ -42,13 +43,9 @@ function getMonday(dateString) {
   return new Date(d.setDate(diff));
 }
 
-function formatDateChile(date) {
-  let dd = date.getDate();
-  let mm = date.getMonth() + 1;
-  return `${dd < 10 ? '0' + dd : dd}/${mm < 10 ? '0' + mm : mm}/${date.getFullYear().toString().substring(2)}`;
-}
 
-export default function PlanificacionTab({ atletas, onSavePlan, onDeletePlan, onSaveCumplimiento }) {
+
+export default function PlanificacionTab({ atletas, onSavePlan, onDeletePlan, onSaveCumplimiento, onSaveCompetencias }) {
   const { theme, isDark } = useTheme();
   const styles = getStyles(theme);
 
@@ -146,7 +143,7 @@ export default function PlanificacionTab({ atletas, onSavePlan, onDeletePlan, on
     setDistSem3(plan.distSem3 ? plan.distSem3.toString() : '32');
     setDistSem4(plan.distSem4 ? plan.distSem4.toString() : '18');
 
-    setCompetencias(plan.competencias || []);
+    setCompetencias(plan.competencias || athlete.competencias || []);
     setMesosPct(plan.mesosPct || DEFAULT_MESO_PCT);
     setMesosPeriodos(plan.mesosPeriodos || DEFAULT_PERIODOS.slice(0, numMeso));
     setFeedback(plan.feedback || '');
@@ -311,22 +308,40 @@ export default function PlanificacionTab({ atletas, onSavePlan, onDeletePlan, on
       Alert.alert('Error', 'Ingresa el nombre de la competencia.');
       return;
     }
-    if (!newCompFecha) {
+    if (!newCompFecha.trim()) {
       Alert.alert('Error', 'Ingresa la fecha de la competencia.');
       return;
     }
 
-    setCompetencias(prev => [
-      ...prev,
-      { nombre: newCompNombre.trim(), fecha: newCompFecha }
-    ]);
+    const normDate = normalizeDateToISO(newCompFecha.trim());
+    const newComp = { nombre: newCompNombre.trim(), fecha: normDate };
+    const updated = [...competencias, newComp];
+
+    setCompetencias(updated);
     setNewCompNombre('');
     setNewCompFecha('');
     setShowCompForm(false);
+
+    if (selectedAtletaId && onSaveCompetencias) {
+      onSaveCompetencias(selectedAtletaId, updated, {
+        text: `🏆 Nueva competencia registrada: ${newComp.nombre} (${formatDateChile(normDate)})`,
+        nombre: newComp.nombre
+      });
+      Alert.alert('Éxito', `Competencia "${newComp.nombre}" agregada y guardada para ${selectedAthlete?.nombre || 'el atleta'}.`);
+    }
   };
 
   const handleDeleteComp = (idx) => {
-    setCompetencias(prev => prev.filter((_, i) => i !== idx));
+    const deletedComp = competencias[idx];
+    const updated = competencias.filter((_, i) => i !== idx);
+    setCompetencias(updated);
+
+    if (selectedAtletaId && onSaveCompetencias && deletedComp) {
+      onSaveCompetencias(selectedAtletaId, updated, {
+        text: `Competencia eliminada: ${deletedComp.nombre}`,
+        nombre: deletedComp.nombre
+      });
+    }
   };
 
   const calculatePlan = (overrideData = null) => {
@@ -520,7 +535,7 @@ export default function PlanificacionTab({ atletas, onSavePlan, onDeletePlan, on
     setDistSem2(plan.distSem2 ? plan.distSem2.toString() : '27');
     setDistSem3(plan.distSem3 ? plan.distSem3.toString() : '32');
     setDistSem4(plan.distSem4 ? plan.distSem4.toString() : '18');
-    setCompetencias(plan.competencias || []);
+    setCompetencias(plan.competencias || athlete.competencias || []);
     setMesosPct(plan.mesosPct || DEFAULT_MESO_PCT);
     setMesosPeriodos(plan.mesosPeriodos || DEFAULT_PERIODOS.slice(0, numMeso));
     setFeedback(plan.feedback || '');
@@ -864,7 +879,7 @@ export default function PlanificacionTab({ atletas, onSavePlan, onDeletePlan, on
                 </View>
                 <View style={{ flex: 1, marginLeft: 10 }}>
                   <Text style={styles.compName}>{comp.nombre}</Text>
-                  <Text style={styles.compDate}>{comp.fecha}</Text>
+                  <Text style={styles.compDate}>{formatDateChile(comp.fecha)}</Text>
                 </View>
                 <TouchableOpacity onPress={() => handleDeleteComp(idx)} style={styles.compDeleteBtn}>
                   <Ionicons name="trash-outline" size={16} color={theme.error} />

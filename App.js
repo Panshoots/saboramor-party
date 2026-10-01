@@ -181,9 +181,15 @@ function AppContent() {
             tipo: 'Modificación',
             descripcion: `Actualización de perfil/ficha del atleta (Plan: ${athleteData.tipoPlan || a.tipoPlan || 'Mensual'}, Monto: $${Math.round(athleteData.monto || a.monto || 0).toLocaleString('es-CL')})`
           };
+          const updatedCompetencias = athleteData.competencias !== undefined 
+            ? athleteData.competencias 
+            : (a.competencias || a.plan?.competencias || []);
+          const updatedPlan = a.plan ? { ...a.plan, competencias: updatedCompetencias } : (updatedCompetencias.length > 0 ? { competencias: updatedCompetencias } : a.plan);
           return {
             ...a,
             ...athleteData,
+            competencias: updatedCompetencias,
+            plan: updatedPlan,
             historial: [editLog, ...(a.historial || [])]
           };
         }
@@ -191,11 +197,13 @@ function AppContent() {
       });
     } else {
       // New athlete
+      const newCompetencias = athleteData.competencias || [];
       const newAthlete = {
         id: Date.now(),
         nombre: athleteData.nombre,
         email: athleteData.email || '',
         tipoAtleta: athleteData.tipoAtleta || 'Triathlete',
+        distanciaObjetivo: athleteData.distanciaObjetivo || 'Olímpica',
         genero: athleteData.genero || 'Female',
         username: athleteData.username || athleteData.nombre.toLowerCase().replace(/\s/g, ''),
         direccion: athleteData.direccion || '',
@@ -209,7 +217,8 @@ function AppContent() {
         fechaNacimiento: athleteData.fechaNacimiento || '',
         monto: athleteData.monto || 40000,
         estado: athleteData.estado || (athleteData.pagado !== false ? 'Al Día' : 'Deuda'),
-        plan: null,
+        competencias: newCompetencias,
+        plan: newCompetencias.length > 0 ? { competencias: newCompetencias } : null,
         planHistory: [],
         ecosWeekly: null,
         ecosWeeks: {},
@@ -228,6 +237,35 @@ function AppContent() {
       };
       updatedList = [...atletas, newAthlete];
     }
+    saveAtletas(updatedList);
+  };
+
+  const handleSaveCompetencias = (athleteId, competenciasList, actionInfo = null) => {
+    const updatedList = atletas.map(a => {
+      if (a.id === athleteId) {
+        const currentPlan = a.plan || {};
+        const updatedPlan = { ...currentPlan, competencias: competenciasList };
+        
+        let newHistory = [...(a.historial || [])];
+        if (actionInfo && actionInfo.text) {
+          const compLog = {
+            id: Date.now(),
+            fecha: new Date().toISOString().split('T')[0],
+            tipo: 'Competencia',
+            descripcion: actionInfo.text
+          };
+          newHistory = [compLog, ...newHistory];
+        }
+
+        return {
+          ...a,
+          competencias: competenciasList,
+          plan: updatedPlan,
+          historial: newHistory
+        };
+      }
+      return a;
+    });
     saveAtletas(updatedList);
   };
 
@@ -540,6 +578,7 @@ function AppContent() {
             setCurrentTab={setCurrentTab}
             onSaveAtleta={handleSaveAtleta}
             onDeleteAtleta={handleDeleteAtleta}
+            onSaveCompetencias={handleSaveCompetencias}
           />
         );
       case 'payments':
@@ -562,6 +601,7 @@ function AppContent() {
             onSavePlan={handleSavePlan}
             onDeletePlan={handleDeletePlan}
             onSaveCumplimiento={handleSaveCumplimiento}
+            onSaveCompetencias={handleSaveCompetencias}
           />
         );
       case 'ecos':

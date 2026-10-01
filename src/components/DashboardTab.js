@@ -1,3 +1,4 @@
+import { parseFlexibleDate, normalizeDateToISO, formatDateChile, getDaysRemaining } from '../utils/dateUtils';
 import React, { useState } from 'react';
 import {
   StyleSheet,
@@ -28,7 +29,7 @@ const getInitials = (name) => {
   return parts[0].substring(0, 2).toUpperCase();
 };
 
-export default function DashboardTab({ atletas, setCurrentTab, onSaveAtleta, onDeleteAtleta }) {
+export default function DashboardTab({ atletas, setCurrentTab, onSaveAtleta, onDeleteAtleta, onSaveCompetencias }) {
   const { theme, isDark } = useTheme();
   const styles = getStyles(theme);
 
@@ -65,6 +66,16 @@ export default function DashboardTab({ atletas, setCurrentTab, onSaveAtleta, onD
   // Focus states
   const [focusedField, setFocusedField] = useState(null);
 
+  // Quick Add Competition Modal State
+  const [showQuickCompModal, setShowQuickCompModal] = useState(false);
+  const [quickCompAtletaId, setQuickCompAtletaId] = useState('');
+  const [quickCompNombre, setQuickCompNombre] = useState('');
+  const [quickCompFecha, setQuickCompFecha] = useState('');
+
+  // Next Competition in Athlete Profile Modal
+  const [proximaCompNombre, setProximaCompNombre] = useState('');
+  const [proximaCompFecha, setProximaCompFecha] = useState('');
+
   const openAddModal = () => {
     resetForm();
     setEditingAthlete(null);
@@ -77,6 +88,14 @@ export default function DashboardTab({ atletas, setCurrentTab, onSaveAtleta, onD
     setEmail(athlete.email || '');
     setTipoAtleta(athlete.tipoAtleta || 'Triathlete');
     setDistanciaObjetivo(athlete.distanciaObjetivo || 'Olímpica');
+    const comps = athlete.competencias || athlete.plan?.competencias || [];
+    if (comps.length > 0) {
+      setProximaCompNombre(comps[0].nombre || '');
+      setProximaCompFecha(comps[0].fecha || '');
+    } else {
+      setProximaCompNombre('');
+      setProximaCompFecha('');
+    }
     setGenero(athlete.genero || 'Female');
     setUsername(athlete.username || '');
     setFechaNacimiento(athlete.fechaNacimiento || '01/07/1994');
@@ -101,6 +120,8 @@ export default function DashboardTab({ atletas, setCurrentTab, onSaveAtleta, onD
     setEmail('');
     setTipoAtleta('Triathlete');
     setDistanciaObjetivo('Olímpica');
+    setProximaCompNombre('');
+    setProximaCompFecha('');
     setGenero('Female');
     setUsername('');
     setFechaNacimiento('01/07/1994');
@@ -133,11 +154,26 @@ export default function DashboardTab({ atletas, setCurrentTab, onSaveAtleta, onD
       return;
     }
 
+    let athleteCompetencias = Array.isArray(editingAthlete?.competencias)
+      ? [...editingAthlete.competencias]
+      : (Array.isArray(editingAthlete?.plan?.competencias) ? [...editingAthlete.plan.competencias] : []);
+
+    if (proximaCompNombre.trim() && proximaCompFecha.trim()) {
+      const normDate = normalizeDateToISO(proximaCompFecha.trim());
+      const existingIdx = athleteCompetencias.findIndex(c => c.nombre.toLowerCase().trim() === proximaCompNombre.trim().toLowerCase());
+      if (existingIdx >= 0) {
+        athleteCompetencias[existingIdx] = { nombre: proximaCompNombre.trim(), fecha: normDate };
+      } else {
+        athleteCompetencias = [{ nombre: proximaCompNombre.trim(), fecha: normDate }, ...athleteCompetencias];
+      }
+    }
+
     const athleteData = {
       nombre: nombre.trim(),
       email: email.trim(),
       tipoAtleta,
       distanciaObjetivo,
+      competencias: athleteCompetencias,
       genero,
       username: username.trim() || nombre.toLowerCase().replace(/\s/g, ''),
       direccion: direccion.trim(),
@@ -230,28 +266,114 @@ export default function DashboardTab({ atletas, setCurrentTab, onSaveAtleta, onD
   });
   const avgWeeklyEcos = athletesWithEcos > 0 ? totalWeeklyEcosSum / athletesWithEcos : 0;
 
-  // 2. Aggregate Competitions (Upcoming)
+  // 2. Aggregate Competitions (Upcoming across all plans and athletes)
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
   const upcomingCompetitions = [];
-  atletas.forEach(a => {
-    const comps = a.plan?.competencias || [];
-    comps.forEach(c => {
-      const compDate = new Date(c.fecha + 'T00:00:00');
-      if (compDate >= today) {
-        const diffTime = compDate - today;
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        upcomingCompetitions.push({
-          atletaNombre: a.nombre,
-          carreraNombre: c.nombre,
-          fecha: c.fecha,
-          diasRestantes: diffDays
-        });
+  (atletas || []).forEach(a => {
+    const allComps = [];
+    if (Array.isArray(a.competencias)) allComps.push(...a.competencias);
+    if (Array.isArray(a.plan?.competencias)) allComps.push(...a.plan.competencias);
+    if (Array.isArray(a.planHistory)) {
+      a.planHistory.forEach(p => {
+        if (Array.isArray(p.competencias)) allComps.push(...p.competencias);
+      });
+    }
+
+    const seen = new Set();
+    allComps.forEach(c => {
+      if (!c || !c.nombre || !c.fecha) return;
+      const normDate = normalizeDateToISO(c.fecha);
+      const key = `${c.nombre.toLowerCase().trim()}_${normDate}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+
+      const compDate = parseFlexibleDate(c.fecha);
+      if (compDate) {
+        compDate.setHours(0, 0, 0, 0);
+        const diffDays = getDaysRemaining(compDate);
+        if (diffDays !== null && diffDays >= -3) {
+          upcomingCompetitions.push({
+            atletaId: a.id,
+            atletaNombre: a.nombre,
+            carreraNombre: c.nombre,
+            fecha: normDate || c.fecha,
+            fechaObj: compDate,
+            diasRestantes: diffDays
+          });
+        }
       }
     });
   });
   upcomingCompetitions.sort((a, b) => a.diasRestantes - b.diasRestantes);
+
+  const openQuickCompModal = (presetAthleteId = null) => {
+    setQuickCompAtletaId(presetAthleteId || (atletas && atletas.length > 0 ? atletas[0].id : ''));
+    setQuickCompNombre('');
+    setQuickCompFecha('');
+    setShowQuickCompModal(true);
+  };
+
+  const handleSaveQuickComp = () => {
+    if (!quickCompAtletaId) {
+      Alert.alert('Error', 'Selecciona un atleta.');
+      return;
+    }
+    if (!quickCompNombre.trim()) {
+      Alert.alert('Error', 'Ingresa el nombre de la competencia.');
+      return;
+    }
+    if (!quickCompFecha.trim()) {
+      Alert.alert('Error', 'Ingresa la fecha de la competencia.');
+      return;
+    }
+
+    const targetAthlete = atletas.find(a => a.id === quickCompAtletaId);
+    const currentComps = targetAthlete?.competencias || targetAthlete?.plan?.competencias || [];
+    const normDate = normalizeDateToISO(quickCompFecha.trim());
+    const newComp = { nombre: quickCompNombre.trim(), fecha: normDate };
+    const updated = [newComp, ...currentComps.filter(c => c.nombre.toLowerCase().trim() !== newComp.nombre.toLowerCase().trim())];
+
+    if (onSaveCompetencias) {
+      onSaveCompetencias(quickCompAtletaId, updated, {
+        text: `🏆 Nueva competencia registrada: ${newComp.nombre} (${formatDateChile(normDate)})`,
+        nombre: newComp.nombre
+      });
+    }
+
+    setShowQuickCompModal(false);
+    setQuickCompNombre('');
+    setQuickCompFecha('');
+    Alert.alert('Éxito', `Competencia "${newComp.nombre}" agregada y guardada para ${targetAthlete?.nombre || 'el atleta'}.`);
+  };
+
+  const handleDeleteQuickComp = (atletaId, compNombre, compFecha) => {
+    Alert.alert(
+      'Eliminar Competencia',
+      `¿Deseas eliminar "${compNombre}"?`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Eliminar',
+          style: 'destructive',
+          onPress: () => {
+            const targetAthlete = atletas.find(a => a.id === atletaId);
+            const currentComps = targetAthlete?.competencias || targetAthlete?.plan?.competencias || [];
+            const normDate = normalizeDateToISO(compFecha);
+            const updated = currentComps.filter(c => !(c.nombre.toLowerCase().trim() === compNombre.toLowerCase().trim() && normalizeDateToISO(c.fecha) === normDate));
+            
+            if (onSaveCompetencias) {
+              onSaveCompetencias(atletaId, updated, {
+                text: `Competencia eliminada: ${compNombre}`,
+                nombre: compNombre
+              });
+            }
+          }
+        }
+      ]
+    );
+  };
 
   // 3. Macrocycles Progress
   const macrocyclesProgress = [];
@@ -463,6 +585,20 @@ export default function DashboardTab({ atletas, setCurrentTab, onSaveAtleta, onD
                     ) : null}
                     {atleta.tipoPlan === 'trimestral' ? 'Trimestral' : 'Mensual'} • {formatCLP(atleta.monto)}
                   </Text>
+                  {(() => {
+                    const athleteComp = upcomingCompetitions.find(c => c.atletaId === atleta.id && c.diasRestantes >= 0);
+                    if (!athleteComp) return null;
+                    return (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                        <View style={[styles.athleteCompBadge, { backgroundColor: theme.runBg, borderColor: theme.run }]}>
+                          <Ionicons name="trophy" size={10} color={theme.run} style={{ marginRight: 4 }} />
+                          <Text style={[styles.athleteCompBadgeText, { color: theme.run }]} numberOfLines={1}>
+                            {athleteComp.carreraNombre} ({athleteComp.diasRestantes === 0 ? '¡Hoy!' : `${athleteComp.diasRestantes}d`})
+                          </Text>
+                        </View>
+                      </View>
+                    );
+                  })()}
                 </View>
 
                 <View style={[styles.statusBadge, isPaid ? styles.statusBadgePaid : styles.statusBadgeDebt]}>
@@ -529,27 +665,50 @@ export default function DashboardTab({ atletas, setCurrentTab, onSaveAtleta, onD
       </View>
 
       {/* Competitions Agenda Timeline */}
-      <Text style={styles.sectionTitle}>Próximas Competencias</Text>
+      <View style={styles.sectionHeaderRow}>
+        <Text style={styles.sectionTitle}>Próximas Competencias ({upcomingCompetitions.length})</Text>
+        <TouchableOpacity onPress={() => openQuickCompModal()} style={styles.linkHeaderBtn}>
+          <Text style={[styles.linkHeaderText, { color: theme.run }]}>+ Añadir</Text>
+        </TouchableOpacity>
+      </View>
       <View style={styles.card}>
         {upcomingCompetitions.length > 0 ? (
           upcomingCompetitions.map((item, idx) => (
-            <View key={idx} style={styles.agendaRow}>
+            <View key={idx} style={[styles.agendaRow, idx < upcomingCompetitions.length - 1 ? { borderBottomWidth: 1, borderBottomColor: theme.border } : null]}>
               <View style={[styles.agendaIcon, { backgroundColor: theme.runBg, borderColor: theme.run }]}>
                 <Ionicons name="trophy" size={14} color={theme.run} />
               </View>
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={styles.agendaCompTitle}>{item.carreraNombre}</Text>
-                <Text style={styles.agendaAthleteName}>{item.atletaNombre} • {item.fecha}</Text>
+                <Text style={styles.agendaAthleteName}>{item.atletaNombre} • {formatDateChile(item.fecha)}</Text>
               </View>
               <View style={[styles.agendaDaysBadge, { backgroundColor: item.diasRestantes <= 14 ? theme.errorBg : theme.surfaceSecondary }]}>
                 <Text style={[styles.agendaDaysText, { color: item.diasRestantes <= 14 ? theme.error : theme.text }]}>
-                  {item.diasRestantes === 0 ? '¡Hoy!' : `en ${item.diasRestantes}d`}
+                  {item.diasRestantes === 0 ? '¡Hoy!' : item.diasRestantes < 0 ? `hace ${Math.abs(item.diasRestantes)}d` : `en ${item.diasRestantes}d`}
                 </Text>
               </View>
+              {onSaveCompetencias && item.atletaId ? (
+                <TouchableOpacity 
+                  onPress={() => handleDeleteQuickComp(item.atletaId, item.carreraNombre, item.fecha)}
+                  style={{ padding: 6, marginLeft: 6 }}
+                >
+                  <Ionicons name="trash-outline" size={16} color={theme.textMuted} />
+                </TouchableOpacity>
+              ) : null}
             </View>
           ))
         ) : (
-          <Text style={[styles.emptyText, { color: theme.textMuted }]}>No hay competencias programadas próximamente.</Text>
+          <View style={{ paddingVertical: 14, alignItems: 'center' }}>
+            <Ionicons name="trophy-outline" size={28} color={theme.textMuted} style={{ marginBottom: 6 }} />
+            <Text style={[styles.emptyText, { color: theme.textMuted }]}>No hay competencias programadas próximamente.</Text>
+            <TouchableOpacity 
+              onPress={() => openQuickCompModal()} 
+              style={[styles.btnAddCompQuick, { backgroundColor: theme.runBg, borderColor: theme.run, marginTop: 10 }]}
+            >
+              <Ionicons name="add" size={15} color={theme.run} />
+              <Text style={[styles.btnAddCompQuickText, { color: theme.run }]}>Registrar Competencia</Text>
+            </TouchableOpacity>
+          </View>
         )}
       </View>
 
@@ -734,6 +893,29 @@ export default function DashboardTab({ atletas, setCurrentTab, onSaveAtleta, onD
                             </TouchableOpacity>
                           ))}
                         </View>
+                      </View>
+
+                      {/* Próxima Competencia Objetivo (Opcional) */}
+                      <View style={styles.formGroup}>
+                        <Text style={styles.label}>🏆 Próxima Competencia Objetivo (Opcional)</Text>
+                        <TextInput 
+                          style={[styles.input, focusedField === 'proximaCompNombre' ? styles.inputFocused : null]}
+                          value={proximaCompNombre}
+                          onChangeText={setProximaCompNombre}
+                          placeholder="Ej: Ironman 70.3 Valdivia, Maratón Santiago"
+                          placeholderTextColor={theme.textMuted}
+                          onFocus={() => setFocusedField('proximaCompNombre')}
+                          onBlur={() => setFocusedField(null)}
+                        />
+                        <TextInput 
+                          style={[styles.input, { marginTop: 8 }, focusedField === 'proximaCompFecha' ? styles.inputFocused : null]}
+                          value={proximaCompFecha}
+                          onChangeText={setProximaCompFecha}
+                          placeholder="Fecha (AAAA-MM-DD o DD/MM/AAAA)"
+                          placeholderTextColor={theme.textMuted}
+                          onFocus={() => setFocusedField('proximaCompFecha')}
+                          onBlur={() => setFocusedField(null)}
+                        />
                       </View>
 
                       <View style={styles.formGroup}>
@@ -1312,6 +1494,74 @@ const getStyles = (theme) =>
     },
     progressItemBarCol: {
       height: 6,
+    },
+    athleteCompBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 7,
+      paddingVertical: 2,
+      borderRadius: 6,
+      borderWidth: 1,
+    },
+    athleteCompBadgeText: {
+      fontSize: 10.5,
+      fontWeight: '700',
+    },
+    modalCardQuick: {
+      width: '92%',
+      maxWidth: 420,
+      borderRadius: 18,
+      borderWidth: 1,
+      padding: 18,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 10 },
+      shadowOpacity: 0.25,
+      shadowRadius: 20,
+      elevation: 10,
+    },
+    athleteChip: {
+      paddingHorizontal: 12,
+      paddingVertical: 7,
+      borderRadius: 10,
+      borderWidth: 1,
+    },
+    athleteChipText: {
+      fontSize: 12,
+      fontWeight: '600',
+    },
+    btnAddCompQuick: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+      borderRadius: 10,
+      borderWidth: 1,
+    },
+    btnAddCompQuickText: {
+      fontSize: 12.5,
+      fontWeight: '700',
+    },
+    modalCancelBtn: {
+      paddingVertical: 12,
+      borderRadius: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    modalCancelBtnText: {
+      fontSize: 13,
+      fontWeight: '600',
+    },
+    modalSubmitBtn: {
+      paddingVertical: 12,
+      borderRadius: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    modalSubmitBtnText: {
+      color: '#FFFFFF',
+      fontSize: 13,
+      fontWeight: '700',
     },
     agendaRow: {
       flexDirection: 'row',
