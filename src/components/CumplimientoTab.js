@@ -46,13 +46,15 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
   const [selectedAtletaId, setSelectedAtletaId] = useState(null);
   const [selectedPeriod, setSelectedPeriod] = useState(1);
   const [activeWeekIndex, setActiveWeekIndex] = useState(0);
-  const [selectedMetric, setSelectedMetric] = useState('distancia'); // 'distancia' | 'duracion' | 'tss' | 'ecos'
+  const [selectedMetric, setSelectedMetric] = useState('deportes'); // 'distancia' | 'duracion' | 'tss' | 'ecos'
   
   // Modal state
   const [showInputModal, setShowInputModal] = useState(false);
   const [compNatMeters, setCompNatMeters] = useState('');
-  const [compCicHours, setCompCicHours] = useState('');
-  const [compCarHours, setCompCarHours] = useState('');
+  const [compCicH, setCompCicH] = useState('');
+  const [compCicM, setCompCicM] = useState('');
+  const [compCarH, setCompCarH] = useState('');
+  const [compCarM, setCompCarM] = useState('');
   const [planTssInput, setPlanTssInput] = useState('');
   const [realTssInput, setRealTssInput] = useState('');
   const [planEcosInput, setPlanEcosInput] = useState('');
@@ -68,7 +70,8 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
 
   // Report customization state (what sections to include in PDF and WhatsApp)
   const [reportOptions, setReportOptions] = useState({
-    distance: true,
+    sports: true,
+    distance: false,
     duration: true,
     tss: false,
     ecos: false,
@@ -263,15 +266,37 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
     }
   }
 
+  const natPct = aggNatPlannedM > 0 ? Math.round((aggNatCompletedM / aggNatPlannedM) * 100) : 0;
+  const cicPct = aggCicPlannedMin > 0 ? Math.round((aggCicCompletedMin / aggCicPlannedMin) * 100) : 0;
+  const carPct = aggCarPlannedMin > 0 ? Math.round((aggCarCompletedMin / aggCarPlannedMin) * 100) : 0;
+
+  // Active disciplines average compliance
+  const activeDisciplines = [
+    { name: 'nat', hasPlan: aggNatPlannedM > 0, pct: natPct },
+    { name: 'cic', hasPlan: aggCicPlannedMin > 0, pct: cicPct },
+    { name: 'car', hasPlan: aggCarPlannedMin > 0, pct: carPct }
+  ].filter(d => d.hasPlan);
+  
+  const sportsAvgPct = activeDisciplines.length > 0 
+    ? Math.round(activeDisciplines.reduce((acc, d) => acc + d.pct, 0) / activeDisciplines.length) 
+    : 0;
+
+  const tssPct = aggPlannedTss > 0 ? Math.round((aggCompletedTss / aggPlannedTss) * 100) : 0;
+  const ecosPct = aggPlannedEcos > 0 ? Math.round((aggCompletedEcos / aggPlannedEcos) * 100) : 0;
+
   // Active Metric String & Pct calculation
   let currentPlannedStr = '';
   let currentCompletedStr = '';
-  let currentPct = 0;
+  let currentPct = sportsAvgPct;
 
-  if (selectedMetric === 'distancia') {
-    currentPlannedStr = aggPlannedKm.toFixed(1) + ' km';
-    currentCompletedStr = aggCompletedKm.toFixed(1) + ' km';
-    currentPct = aggPlannedKm > 0 ? Math.round((aggCompletedKm / aggPlannedKm) * 100) : 0;
+  if (selectedMetric === 'deportes') {
+    currentPlannedStr = '3 Disciplinas';
+    currentCompletedStr = sportsAvgPct + '% Promedio';
+    currentPct = sportsAvgPct;
+  } else if (selectedMetric === 'distancia') {
+    currentPlannedStr = (aggNatPlannedM / 1000).toFixed(1) + 'k nado + ' + formatHoursShort(aggCicPlannedMin) + ' bici';
+    currentCompletedStr = (aggNatCompletedM / 1000).toFixed(1) + 'k nado + ' + formatHoursShort(aggCicCompletedMin) + ' bici';
+    currentPct = sportsAvgPct;
   } else if (selectedMetric === 'duracion') {
     currentPlannedStr = formatHoursShort(aggPlannedMin);
     currentCompletedStr = formatHoursShort(aggCompletedMin);
@@ -279,11 +304,11 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
   } else if (selectedMetric === 'tss') {
     currentPlannedStr = Math.round(aggPlannedTss) + ' TSS';
     currentCompletedStr = Math.round(aggCompletedTss) + ' TSS';
-    currentPct = aggPlannedTss > 0 ? Math.round((aggCompletedTss / aggPlannedTss) * 100) : 0;
+    currentPct = tssPct;
   } else {
     currentPlannedStr = Math.round(aggPlannedEcos) + ' ECOs';
     currentCompletedStr = Math.round(aggCompletedEcos) + ' ECOs';
-    currentPct = aggPlannedEcos > 0 ? Math.round((aggCompletedEcos / aggPlannedEcos) * 100) : 0;
+    currentPct = ecosPct;
   }
 
   const getStatusColor = (pct) => {
@@ -307,9 +332,7 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
     return 'Bajo';
   };
 
-  const natPct = aggNatPlannedM > 0 ? Math.round((aggNatCompletedM / aggNatPlannedM) * 100) : 0;
-  const cicPct = aggCicPlannedMin > 0 ? Math.round((aggCicCompletedMin / aggCicPlannedMin) * 100) : 0;
-  const carPct = aggCarPlannedMin > 0 ? Math.round((aggCarCompletedMin / aggCarPlannedMin) * 100) : 0;
+
 
   const openRegisterModal = () => {
     const existing = complianceWeeks[activeWeekIndex];
@@ -317,8 +340,19 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
     
     if (existing) {
       setCompNatMeters(String(existing.natM !== undefined ? existing.natM : ''));
-      setCompCicHours(String(existing.cicHours !== undefined ? existing.cicHours : ''));
-      setCompCarHours(String(existing.carHours !== undefined ? existing.carHours : ''));
+      
+      const cHours = parseFloat(existing.cicHours) || 0;
+      const cH = Math.floor(cHours);
+      const cM = Math.round((cHours - cH) * 60);
+      setCompCicH(cH > 0 ? String(cH) : '');
+      setCompCicM(cM > 0 ? String(cM) : '');
+
+      const rHours = parseFloat(existing.carHours) || 0;
+      const rH = Math.floor(rHours);
+      const rM = Math.round((rHours - rH) * 60);
+      setCompCarH(rH > 0 ? String(rH) : '');
+      setCompCarM(rM > 0 ? String(rM) : '');
+
       setPlanTssInput(String(existing.planTss !== undefined ? existing.planTss : Math.round(wPlan.totalTss)));
       setRealTssInput(String(existing.realTss !== undefined ? existing.realTss : ''));
       setPlanEcosInput(String(existing.planEcos !== undefined ? existing.planEcos : Math.round(wPlan.totalEcos)));
@@ -333,8 +367,15 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
       });
     } else {
       setCompNatMeters(String(Math.round(wPlan.natM * 0.85)));
-      setCompCicHours((wPlan.cicMin / 60 * 0.85).toFixed(1));
-      setCompCarHours((wPlan.carMin / 60 * 0.85).toFixed(1));
+      
+      const defCicMin = Math.round(wPlan.cicMin * 0.85);
+      setCompCicH(String(Math.floor(defCicMin / 60)));
+      setCompCicM(String(defCicMin % 60));
+
+      const defCarMin = Math.round(wPlan.carMin * 0.85);
+      setCompCarH(String(Math.floor(defCarMin / 60)));
+      setCompCarM(String(defCarMin % 60));
+
       setPlanTssInput(String(Math.round(wPlan.totalTss)));
       setRealTssInput(String(Math.round(wPlan.totalTss * 0.85)));
       setPlanEcosInput(String(Math.round(wPlan.totalEcos)));
@@ -355,8 +396,10 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
     if (!selectedAthlete) return;
 
     const natVal = parseFloat(compNatMeters) || 0;
-    const cicVal = parseFloat(compCicHours) || 0;
-    const carVal = parseFloat(compCarHours) || 0;
+    const cicHoursNum = (parseFloat(compCicH) || 0) + ((parseFloat(compCicM) || 0) / 60);
+    const carHoursNum = (parseFloat(compCarH) || 0) + ((parseFloat(compCarM) || 0) / 60);
+    const cicVal = parseFloat(cicHoursNum.toFixed(2));
+    const carVal = parseFloat(carHoursNum.toFixed(2));
 
     const updatedComplianceWeeks = {
       ...(selectedAthlete.cumplimientoWeeks || {}),
@@ -398,25 +441,16 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
     if (!selectedAthlete) return;
     const periodLabel = selectedPeriod === 1 ? ('Semana ' + (activeWeekIndex + 1)) : (selectedPeriod + ' Semanas (Mesociclo)');
     
-    // Overall primary comparison percentage
-    let primaryPct = currentPct;
-    if (reportOptions.distance) {
-      primaryPct = aggPlannedKm > 0 ? Math.round((aggCompletedKm / aggPlannedKm) * 100) : 0;
-    } else if (reportOptions.duration) {
-      primaryPct = aggPlannedMin > 0 ? Math.round((aggCompletedMin / aggPlannedMin) * 100) : 0;
-    }
+    // Overall primary comparison percentage is the average of the 3 sports
+    const primaryPct = sportsAvgPct;
 
     let msg = '📊 *REPORTE DE CUMPLIMIENTO DE ENTRENAMIENTO*\n' +
       '👤 *Atleta:* ' + selectedAthlete.nombre + '\n' +
       '📅 *Periodo:* ' + periodLabel + '\n\n' +
-      '📈 *CUMPLIMIENTO GLOBAL: ' + primaryPct + '% (' + getStatusLabel(primaryPct) + ')*\n';
+      '📈 *CUMPLIMIENTO DEPORTIVO (3 DISCIPLINAS): ' + primaryPct + '% (' + getStatusLabel(primaryPct) + ')*\n';
 
-    // Selective metrics
-    if (reportOptions.distance) {
-      msg += '• *Distancia:* ' + aggCompletedKm.toFixed(1) + ' km / ' + aggPlannedKm.toFixed(1) + ' km\n';
-    }
     if (reportOptions.duration) {
-      msg += '• *Duración:* ' + formatHoursShort(aggCompletedMin) + ' / ' + formatHoursShort(aggPlannedMin) + '\n';
+      msg += '• *Tiempo Total:* ' + formatHoursShort(aggCompletedMin) + ' / ' + formatHoursShort(aggPlannedMin) + '\n';
     }
     if (reportOptions.tss) {
       const tssPct = aggPlannedTss > 0 ? Math.round((aggCompletedTss / aggPlannedTss) * 100) : 0;
@@ -467,9 +501,12 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
         periodLabel: selectedPeriod === 1 ? ('Semana ' + (activeWeekIndex + 1)) : (selectedPeriod + ' Semanas (Mesociclo)'),
         semanaNum: activeWeekIndex + 1,
         startDate: calculatedWeeks[activeWeekIndex]?.fechaInicio || '',
-        currentPct,
-        statusLabel: getStatusLabel(currentPct),
-        statusColor: getStatusColor(currentPct),
+        currentPct: sportsAvgPct,
+        statusLabel: getStatusLabel(sportsAvgPct),
+        statusColor: getStatusColor(sportsAvgPct),
+        sportsAvgPct,
+        tssPct,
+        ecosPct,
         plannedKm: aggPlannedKm.toFixed(1),
         completedKm: aggCompletedKm.toFixed(1),
         plannedDuration: formatHoursShort(aggPlannedMin),
@@ -610,11 +647,11 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
         </View>
       </View>
 
-      {/* 4. METRIC SWITCHER TABS (Distancia, Duración, TSS, ECOs) */}
+      {/* 4. METRIC SWITCHER TABS (Deportes, Duración, TSS, ECOs) */}
       <View style={styles.metricTabsRow}>
         {[
-          { id: 'distancia', label: 'Distancia', icon: 'map-outline' },
-          { id: 'duracion', label: 'Duración', icon: 'time-outline' },
+          { id: 'deportes', label: '3 Deportes', icon: 'trophy-outline' },
+          { id: 'duracion', label: 'Tiempo Total', icon: 'time-outline' },
           { id: 'tss', label: 'TSS', icon: 'flash-outline' },
           { id: 'ecos', label: 'ECOs', icon: 'flame-outline' },
         ].map((m) => {
@@ -658,16 +695,16 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
         {/* COMPARISON METRIC BLOCK */}
         <View style={styles.comparisonBox}>
           <View style={styles.compCol}>
-            <Text style={styles.compColLabel}>PLANEADO</Text>
-            <Text style={styles.compColVal} numberOfLines={1}>{currentPlannedStr}</Text>
+            <Text style={styles.compColLabel}>3 DISCIPLINAS</Text>
+            <Text style={styles.compColVal} numberOfLines={1}>{formatHoursShort(aggCompletedMin)} / {formatHoursShort(aggPlannedMin)}</Text>
           </View>
 
           <View style={styles.compDivider} />
 
           <View style={styles.compCol}>
-            <Text style={styles.compColLabel}>REALIZADO</Text>
+            <Text style={styles.compColLabel}>MÉTRICA</Text>
             <Text style={[styles.compColVal, { color: getStatusColor(currentPct) }]} numberOfLines={1}>
-              {currentCompletedStr}
+              {selectedMetric === 'deportes' ? 'Nat + Bici + Car' : selectedMetric.toUpperCase()}
             </Text>
           </View>
 
@@ -680,6 +717,30 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
             </Text>
           </View>
         </View>
+
+        {/* COMPLEMENTARY TSS & ECOS ROW */}
+        {(aggPlannedTss > 0 || aggPlannedEcos > 0) && (
+          <View style={styles.complementaryMetricsRow}>
+            <View style={[styles.compMetricPill, { borderColor: theme.border }]}>
+              <Ionicons name="flash" size={13} color="#eab308" style={{ marginRight: 4 }} />
+              <Text style={styles.compMetricText}>
+                TSS: <Text style={{ fontWeight: '800', color: theme.text }}>{Math.round(aggCompletedTss)}/{Math.round(aggPlannedTss)}</Text> ({tssPct}%)
+              </Text>
+            </View>
+            <View style={[styles.compMetricPill, { borderColor: theme.border }]}>
+              <Ionicons name="flame" size={13} color="#f97316" style={{ marginRight: 4 }} />
+              <Text style={styles.compMetricText}>
+                ECOs: <Text style={{ fontWeight: '800', color: theme.text }}>{Math.round(aggCompletedEcos)}/{Math.round(aggPlannedEcos)}</Text> ({ecosPct}%)
+              </Text>
+            </View>
+            <View style={[styles.compMetricPill, { borderColor: theme.border }]}>
+              <Ionicons name="trophy" size={13} color={theme.primary} style={{ marginRight: 4 }} />
+              <Text style={styles.compMetricText}>
+                Deportes: <Text style={{ fontWeight: '800', color: theme.primary }}>{sportsAvgPct}%</Text>
+              </Text>
+            </View>
+          </View>
+        )}
 
         {/* DAY-BY-DAY BAR CHART */}
         <View style={styles.dailyChartContainer}>
@@ -973,27 +1034,55 @@ export default function CumplimientoTab({ atletas, onSaveCumplimiento }) {
               </View>
 
               <View style={styles.inputFieldWrap}>
-                <Text style={styles.inputLabel}>🚴 Ciclismo Real (Horas):</Text>
-                <TextInput
-                  style={styles.textInput}
-                  keyboardType="numeric"
-                  placeholder="Ej. 4.5"
-                  placeholderTextColor={theme.textMuted}
-                  value={compCicHours}
-                  onChangeText={setCompCicHours}
-                />
+                <Text style={styles.inputLabel}>🚴 Ciclismo Real (Horas y Minutos):</Text>
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                  <View style={{ flex: 1 }}>
+                    <TextInput
+                      style={styles.textInput}
+                      keyboardType="numeric"
+                      placeholder="Horas (ej. 3)"
+                      placeholderTextColor={theme.textMuted}
+                      value={compCicH}
+                      onChangeText={setCompCicH}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <TextInput
+                      style={styles.textInput}
+                      keyboardType="numeric"
+                      placeholder="Minutos (ej. 15)"
+                      placeholderTextColor={theme.textMuted}
+                      value={compCicM}
+                      onChangeText={setCompCicM}
+                    />
+                  </View>
+                </View>
               </View>
 
               <View style={styles.inputFieldWrap}>
-                <Text style={styles.inputLabel}>🏃 Carrera Real (Horas):</Text>
-                <TextInput
-                  style={styles.textInput}
-                  keyboardType="numeric"
-                  placeholder="Ej. 3.2"
-                  placeholderTextColor={theme.textMuted}
-                  value={compCarHours}
-                  onChangeText={setCompCarHours}
-                />
+                <Text style={styles.inputLabel}>🏃 Carrera Real (Horas y Minutos):</Text>
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                  <View style={{ flex: 1 }}>
+                    <TextInput
+                      style={styles.textInput}
+                      keyboardType="numeric"
+                      placeholder="Horas (ej. 1)"
+                      placeholderTextColor={theme.textMuted}
+                      value={compCarH}
+                      onChangeText={setCompCarH}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <TextInput
+                      style={styles.textInput}
+                      keyboardType="numeric"
+                      placeholder="Minutos (ej. 45)"
+                      placeholderTextColor={theme.textMuted}
+                      value={compCarM}
+                      onChangeText={setCompCarM}
+                    />
+                  </View>
+                </View>
               </View>
 
               {/* SECTION 2: TSS MANUAL INPUT (PLAN vs REAL) */}
@@ -1376,6 +1465,28 @@ const getStyles = (theme) =>
       fontWeight: '800',
       textTransform: 'uppercase',
       letterSpacing: 0.4,
+    },
+    complementaryMetricsRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 6,
+      marginTop: 10,
+      paddingTop: 10,
+      borderTopWidth: 1,
+      borderTopColor: theme.border,
+    },
+    compMetricPill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: theme.surfaceSecondary,
+      borderWidth: 1,
+      borderRadius: 8,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+    },
+    compMetricText: {
+      fontSize: 11,
+      color: theme.textSecondary,
     },
     dailyChartContainer: {
       marginBottom: 16,

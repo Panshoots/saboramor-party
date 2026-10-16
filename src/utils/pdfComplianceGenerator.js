@@ -14,6 +14,9 @@ export async function generateCompliancePDF(data) {
     semanaNum = 1,
     startDate = '',
     currentPct = 0,
+    sportsAvgPct = null,
+    tssPct = null,
+    ecosPct = null,
     statusLabel = 'Óptimo',
     statusColor = '#10b981',
     plannedKm = '0.0',
@@ -562,8 +565,10 @@ export async function generateCompliancePDF(data) {
   <div class="kpi-container">
     ${kpiCardsHtml}
     <div class="kpi-score-card">
-      <div class="kpi-score-pct">${currentPct}%</div>
+      <div style="font-size: 10px; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 3px;">Cumplimiento Deportivo</div>
+      <div class="kpi-score-pct">${sportsAvgPct !== null ? sportsAvgPct : currentPct}%</div>
       <div class="kpi-score-label">${statusLabel}</div>
+      <div style="font-size: 9px; color: #64748b; margin-top: 4px; font-weight: 700;">Promedio 3 Disciplinas</div>
     </div>
   </div>
 
