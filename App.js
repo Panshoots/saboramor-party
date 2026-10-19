@@ -22,7 +22,8 @@ import {
   fetchAtletasFromCloud, 
   saveAtletasToCloud, 
   deleteAtletaFromCloud, 
-  subscribeToAtletasCloud 
+  subscribeToAtletasCloud,
+  mergeAtletasLists 
 } from './src/services/firebase';
 
 // Import Screens
@@ -87,11 +88,14 @@ function AppContent() {
       }
     });
 
-    // Real-time Cloud Sync Subscription
+    // Real-time Cloud Sync Subscription with Non-Destructive Merge
     const unsubscribeCloud = subscribeToAtletasCloud((cloudList) => {
-      if (cloudList && Array.isArray(cloudList) && cloudList.length > 0) {
-        setAtletas(cloudList);
-        AsyncStorage.setItem('atletas_tri_v10', JSON.stringify(cloudList)).catch(console.log);
+      if (cloudList && Array.isArray(cloudList)) {
+        setAtletas(currentLocal => {
+          const merged = mergeAtletasLists(currentLocal, cloudList);
+          AsyncStorage.setItem('atletas_tri_v10', JSON.stringify(merged)).catch(console.log);
+          return merged;
+        });
       }
     });
 
@@ -126,7 +130,7 @@ function AppContent() {
         setIsAuthenticated(false);
       }
 
-      // 2. Load Athletes from Cloud Firestore with Local Storage Fallback
+      // 2. Load Athletes with safe local-first and non-destructive cloud merge
       await loadAtletas();
     } catch (e) {
       console.log('Error initializing app:', e);
@@ -137,22 +141,33 @@ function AppContent() {
 
   const loadAtletas = async () => {
     try {
-      // Attempt cloud fetch first
-      const cloudAtletas = await fetchAtletasFromCloud();
-      if (cloudAtletas && Array.isArray(cloudAtletas) && cloudAtletas.length > 0) {
-        setAtletas(cloudAtletas);
-        await AsyncStorage.setItem('atletas_tri_v10', JSON.stringify(cloudAtletas));
-        return;
-      }
-
-      // Fallback to local storage if offline or initial load
+      // Step A: Immediately load local athletes from device memory so data is instantly preserved
+      let localAtletas = [];
       const stored = await AsyncStorage.getItem('atletas_tri_v10');
       if (stored) {
-        const parsed = JSON.parse(stored);
-        setAtletas(parsed);
-        if (parsed.length > 0) {
-          saveAtletasToCloud(parsed).catch(console.log);
+        try {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            localAtletas = parsed;
+            setAtletas(parsed);
+          }
+        } catch (err) {
+          console.log('Error parsing local athletes:', err);
         }
+      }
+
+      // Step B: Connect to cloud Firestore and merge non-destructively
+      const cloudAtletas = await fetchAtletasFromCloud();
+      if (cloudAtletas && Array.isArray(cloudAtletas)) {
+        const merged = mergeAtletasLists(localAtletas, cloudAtletas);
+        setAtletas(merged);
+        await AsyncStorage.setItem('atletas_tri_v10', JSON.stringify(merged));
+        if (merged.length > 0) {
+          saveAtletasToCloud(merged).catch(console.log);
+        }
+      } else if (localAtletas.length > 0) {
+        // Cloud was unavailable or permissions pending: keep local completely intact & attempt backup
+        saveAtletasToCloud(localAtletas).catch(console.log);
       }
     } catch (e) {
       console.log('Error loading athletes:', e);

@@ -132,4 +132,75 @@ export function subscribeToSystemConfig(onUpdate) {
   }
 }
 
+/**
+ * Intelligently and non-destructively merges local and cloud athlete lists,
+ * ensuring no athlete, training record, abono or competition is ever lost.
+ */
+export function mergeAtletasLists(localList = [], cloudList = []) {
+  if (!Array.isArray(localList)) localList = [];
+  if (!Array.isArray(cloudList)) cloudList = [];
+
+  const map = new Map();
+
+  // 1. Index all local athletes
+  for (const a of localList) {
+    if (a && a.id) {
+      map.set(String(a.id), { ...a });
+    }
+  }
+
+  // 2. Merge cloud athletes without deleting local data
+  for (const c of cloudList) {
+    if (!c || !c.id) continue;
+    const idKey = String(c.id);
+    const existing = map.get(idKey);
+
+    if (!existing) {
+      map.set(idKey, c);
+    } else {
+      // Both exist: perform union of logs, payments and competitions
+      const existingLatestLog = (existing.historial || [])[0]?.id || 0;
+      const cloudLatestLog = (c.historial || [])[0]?.id || 0;
+
+      // Deduplicate history by ID
+      const allHistoryMap = new Map();
+      [...(c.historial || []), ...(existing.historial || [])].forEach(h => {
+        if (h && h.id) allHistoryMap.set(String(h.id), h);
+      });
+      const mergedHistorial = Array.from(allHistoryMap.values()).sort((a, b) => (b.id || 0) - (a.id || 0));
+
+      // Deduplicate abonos by ID
+      const allAbonosMap = new Map();
+      [...(c.abonos || []), ...(existing.abonos || [])].forEach(ab => {
+        if (ab && ab.id) allAbonosMap.set(String(ab.id), ab);
+      });
+      const mergedAbonos = Array.from(allAbonosMap.values());
+
+      // Deduplicate competencias
+      const compMap = new Map();
+      [...(c.competencias || []), ...(existing.competencias || [])].forEach(comp => {
+        const key = comp.nombre || comp.id || JSON.stringify(comp);
+        compMap.set(key, comp);
+      });
+      const mergedCompetencias = Array.from(compMap.values());
+
+      const base = existingLatestLog >= cloudLatestLog ? existing : c;
+      const secondary = existingLatestLog >= cloudLatestLog ? c : existing;
+
+      map.set(idKey, {
+        ...secondary,
+        ...base,
+        historial: mergedHistorial,
+        abonos: mergedAbonos,
+        competencias: mergedCompetencias,
+        ecosWeeks: { ...(c.ecosWeeks || {}), ...(existing.ecosWeeks || {}) },
+        planHistory: [...(base.planHistory || secondary.planHistory || [])],
+        plan: base.plan || secondary.plan || null
+      });
+    }
+  }
+
+  return Array.from(map.values());
+}
+
 
