@@ -10,7 +10,7 @@
       "supportsTablet": true
     },
     "android": {
-      "package": "com.eplchile.app",
+      "package": "com.saboramorparty.app",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -28,21 +28,18 @@
       "scope": "/",
       "startUrl": "/"
     },
+    "owner": "panchoand1",
+    "sdkVersion": "57.0.0",
     "extra": {
       "eas": {
-        "projectId": "f1a152e8-ec08-477a-8e2d-bb46050e1eba"
+        "projectId": "2ac36abf-e7a4-4dcd-9e3c-7f6b29c77084"
       }
     },
-    "owner": "epl-chile",
-    "sdkVersion": "57.0.0",
     "runtimeVersion": {
-      "policy": "sdkVersion"
+      "policy": "appVersion"
     },
     "updates": {
-      "url": "https://u.expo.dev/f1a152e8-ec08-477a-8e2d-bb46050e1eba",
-      "enabled": true,
-      "checkAutomatically": "ON_LOAD",
-      "fallbackToCacheTimeout": 10000
+      "url": "https://u.expo.dev/2ac36abf-e7a4-4dcd-9e3c-7f6b29c77084"
     }
   }
 }
