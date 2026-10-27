@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "EPL",
-    "slug": "epl",
+    "name": "SaborAmor Party - Costos y Precios 3D",
+    "slug": "saboramor-party",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -19,7 +19,14 @@
       }
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/favicon.png",
+      "name": "SaborAmor Party",
+      "shortName": "SaborAmor",
+      "themeColor": "#1e1b4b",
+      "backgroundColor": "#1e1b4b",
+      "display": "standalone",
+      "scope": "/",
+      "startUrl": "/"
     },
     "extra": {
       "eas": {
