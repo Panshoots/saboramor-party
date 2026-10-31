@@ -44,10 +44,14 @@ export default function Calculadora3DTab({
   const [recordType, setRecordType] = useState('presupuesto'); // 'presupuesto' | 'real'
   const [quantity, setQuantity] = useState('1'); // Cantidad de productos terminados en el lote
 
-  // Tiempo de impresión
+  // Tiempo de impresión y desglose por placas
   const [hours, setHours] = useState('2');
   const [minutes, setMinutes] = useState('30');
   const [platesCount, setPlatesCount] = useState('1');
+  const [platesDetail, setPlatesDetail] = useState([
+    { id: 'p-1', plateNumber: 1, name: 'Placa 1', hours: '2', minutes: '30', grams: '45.0' },
+  ]);
+  const [showPlatesBreakdown, setShowPlatesBreakdown] = useState(false);
 
   // Filamentos usados
   const [filamentsUsed, setFilamentsUsed] = useState([
@@ -88,9 +92,54 @@ export default function Calculadora3DTab({
   // Escuchar si vienen datos desde el escáner de Bambu Studio
   React.useEffect(() => {
     if (incomingScannerData) {
-      setHours(String(incomingScannerData.printHours || 0));
-      setMinutes(String(incomingScannerData.printMinutes || 0));
-      setPlatesCount(String(incomingScannerData.platesCount || 1));
+      const h = incomingScannerData.printHours || 0;
+      const m = incomingScannerData.printMinutes || 0;
+      const count = incomingScannerData.platesCount || 1;
+      setHours(String(h));
+      setMinutes(String(m));
+      setPlatesCount(String(count));
+
+      if (incomingScannerData.platesDetail && incomingScannerData.platesDetail.length > 0) {
+        setPlatesDetail(
+          incomingScannerData.platesDetail.map((p, idx) => ({
+            id: p.id || `p-${idx + 1}`,
+            plateNumber: p.plateNumber || idx + 1,
+            name: p.name || `Placa ${idx + 1}`,
+            hours: String(p.hours ?? 0),
+            minutes: String(p.minutes ?? 0),
+            grams: String(p.grams ?? 0),
+          }))
+        );
+        setShowPlatesBreakdown(incomingScannerData.platesDetail.length > 1);
+      } else if (count > 1) {
+        const totalM = h * 60 + m;
+        const perM = Math.floor(totalM / count);
+        const perG = Number(((incomingScannerData.totalGrams || 45) / count).toFixed(1));
+        const gen = [];
+        for (let i = 1; i <= count; i++) {
+          gen.push({
+            id: `p-${i}`,
+            plateNumber: i,
+            name: `Placa ${i}`,
+            hours: String(Math.floor(perM / 60)),
+            minutes: String(perM % 60),
+            grams: String(perG),
+          });
+        }
+        setPlatesDetail(gen);
+        setShowPlatesBreakdown(true);
+      } else {
+        setPlatesDetail([
+          {
+            id: 'p-1',
+            plateNumber: 1,
+            name: 'Placa 1',
+            hours: String(h),
+            minutes: String(m),
+            grams: String(incomingScannerData.totalGrams || 45.0),
+          },
+        ]);
+      }
 
       if (incomingScannerData.filaments && incomingScannerData.filaments.length > 0) {
         setFilamentsUsed(
@@ -109,6 +158,54 @@ export default function Calculadora3DTab({
       onClearScannerData && onClearScannerData();
     }
   }, [incomingScannerData]);
+
+  // Sincronizar totales de tiempo y material cuando se editan las placas
+  const syncTotalsFromPlates = (newPlates) => {
+    const totalM = newPlates.reduce((acc, p) => acc + ((parseInt(p.hours, 10) || 0) * 60) + (parseInt(p.minutes, 10) || 0), 0);
+    const sumGrams = newPlates.reduce((acc, p) => acc + (parseFloat(p.grams) || 0), 0);
+
+    setHours(String(Math.floor(totalM / 60)));
+    setMinutes(String(totalM % 60));
+    setPlatesCount(String(newPlates.length));
+
+    // Si solo hay un filamento, sincronizar automáticamente con los gramos totales de las placas
+    if (filamentsUsed.length === 1 && sumGrams > 0) {
+      setFilamentsUsed((prev) => [
+        {
+          ...prev[0],
+          grams: String(sumGrams.toFixed(1)),
+        },
+      ]);
+    }
+  };
+
+  const handleAddPlate = () => {
+    const nextNum = platesDetail.length + 1;
+    const newPlate = {
+      id: `p-${Date.now()}`,
+      plateNumber: nextNum,
+      name: `Placa ${nextNum}`,
+      hours: '0',
+      minutes: '45',
+      grams: '25.0',
+    };
+    const updated = [...platesDetail, newPlate];
+    setPlatesDetail(updated);
+    syncTotalsFromPlates(updated);
+  };
+
+  const handleUpdatePlate = (id, field, value) => {
+    const updated = platesDetail.map((p) => (p.id === id ? { ...p, [field]: value } : p));
+    setPlatesDetail(updated);
+    syncTotalsFromPlates(updated);
+  };
+
+  const handleRemovePlate = (id) => {
+    if (platesDetail.length <= 1) return;
+    const updated = platesDetail.filter((p) => p.id !== id);
+    setPlatesDetail(updated);
+    syncTotalsFromPlates(updated);
+  };
 
   // Manejo de filamentos
   const handleAddFilament = () => {
@@ -231,7 +328,7 @@ export default function Calculadora3DTab({
       totalRevenue: Math.round(currentSellingPrice * qty),
       estimatedProfit: Math.round(profitBatch),
       profitMarginPercent: Number(marginReal.toFixed(1)),
-      notes: `${formatHoursMinutes(hours, minutes)} de impresión, ${totalFilamentGrams.toFixed(1)}g totales (${platesCount} ${parseInt(platesCount, 10) === 1 ? 'placa' : 'placas'}). Electricidad: ${isElectricityMeasured ? 'Medida' : 'Estimada'}, Desgaste: ${isWearMeasured ? 'Medido' : 'Estimado'}.`,
+      notes: `${formatHoursMinutes(hours, minutes)} de impresión, ${totalFilamentGrams.toFixed(1)}g totales (${platesCount} ${parseInt(platesCount, 10) === 1 ? 'placa' : 'placas'}${platesDetail.length > 1 ? `: ${platesDetail.map((p) => `${p.name} (${p.hours}h${p.minutes}m, ${p.grams}g)`).join(' + ')}` : ''}). Electricidad: ${isElectricityMeasured ? 'Medida' : 'Estimada'}, Desgaste: ${isWearMeasured ? 'Medido' : 'Estimado'}.`,
     };
 
     onSaveToHistory(record);
@@ -347,13 +444,122 @@ export default function Calculadora3DTab({
                 style={styles.timeInput}
                 keyboardType="numeric"
                 value={platesCount}
-                onChangeText={setPlatesCount}
+                onChangeText={(val) => {
+                  setPlatesCount(val);
+                  const num = parseInt(val, 10);
+                  if (num > 1 && !showPlatesBreakdown) {
+                    setShowPlatesBreakdown(true);
+                  }
+                }}
                 placeholder="1"
               />
               <Text style={styles.unitText}>placa</Text>
             </View>
           </View>
         </View>
+
+        {/* Toggle Desglose por Placas */}
+        <TouchableOpacity
+          style={[styles.platesToggleBtn, showPlatesBreakdown && styles.platesToggleBtnActive]}
+          onPress={() => setShowPlatesBreakdown(!showPlatesBreakdown)}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Ionicons
+              name="layers-outline"
+              size={18}
+              color={showPlatesBreakdown ? '#4f46e5' : '#475569'}
+              style={{ marginRight: 6 }}
+            />
+            <Text style={[styles.platesToggleText, showPlatesBreakdown && styles.platesToggleTextActive]}>
+              Desglose de las {platesDetail.length} Placas ({formatHoursMinutes(hours, minutes)} sumadas)
+            </Text>
+          </View>
+          <Ionicons
+            name={showPlatesBreakdown ? 'chevron-up' : 'chevron-down'}
+            size={18}
+            color={showPlatesBreakdown ? '#4f46e5' : '#64748b'}
+          />
+        </TouchableOpacity>
+
+        {/* Desglose Interactivo de Placas */}
+        {showPlatesBreakdown && (
+          <View style={styles.platesContainer}>
+            <View style={styles.platesContainerHeader}>
+              <Text style={styles.platesContainerTitle}>Placas del Proyecto (Suma automática)</Text>
+              <TouchableOpacity onPress={handleAddPlate} style={styles.addPlateSmallBtn}>
+                <Ionicons name="add-circle" size={16} color="#4f46e5" style={{ marginRight: 4 }} />
+                <Text style={styles.addPlateSmallBtnText}>+ Otra Placa</Text>
+              </TouchableOpacity>
+            </View>
+
+            {platesDetail.map((plate, pIdx) => (
+              <View key={plate.id} style={styles.plateItemBox}>
+                <View style={styles.plateItemHeader}>
+                  <TextInput
+                    style={styles.plateNameInput}
+                    value={plate.name}
+                    onChangeText={(v) => handleUpdatePlate(plate.id, 'name', v)}
+                    placeholder={`Placa ${pIdx + 1}`}
+                  />
+                  {platesDetail.length > 1 && (
+                    <TouchableOpacity onPress={() => handleRemovePlate(plate.id)} style={{ padding: 4 }}>
+                      <Ionicons name="trash-outline" size={16} color="#ef4444" />
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                <View style={styles.plateFieldsRow}>
+                  <View style={{ flex: 1.5, marginRight: 8 }}>
+                    <Text style={styles.miniLabel}>Tiempo de esta placa</Text>
+                    <View style={styles.timeInputsRow}>
+                      <View style={styles.timeInputBoxSmall}>
+                        <TextInput
+                          style={styles.timeInputSmall}
+                          keyboardType="numeric"
+                          value={plate.hours}
+                          onChangeText={(v) => handleUpdatePlate(plate.id, 'hours', v)}
+                          placeholder="0"
+                        />
+                        <Text style={styles.unitTextSmall}>h</Text>
+                      </View>
+                      <View style={styles.timeInputBoxSmall}>
+                        <TextInput
+                          style={styles.timeInputSmall}
+                          keyboardType="numeric"
+                          value={plate.minutes}
+                          onChangeText={(v) => handleUpdatePlate(plate.id, 'minutes', v)}
+                          placeholder="0"
+                        />
+                        <Text style={styles.unitTextSmall}>m</Text>
+                      </View>
+                    </View>
+                  </View>
+
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.miniLabel}>Material (g)</Text>
+                    <View style={styles.timeInputBoxSmall}>
+                      <TextInput
+                        style={styles.timeInputSmall}
+                        keyboardType="numeric"
+                        value={plate.grams}
+                        onChangeText={(v) => handleUpdatePlate(plate.id, 'grams', v)}
+                        placeholder="0"
+                      />
+                      <Text style={styles.unitTextSmall}>g</Text>
+                    </View>
+                  </View>
+                </View>
+              </View>
+            ))}
+
+            <View style={styles.platesSummaryNotice}>
+              <Ionicons name="checkmark-circle" size={16} color="#059669" style={{ marginRight: 6 }} />
+              <Text style={styles.platesSummaryNoticeText}>
+                Suma total: {formatHoursMinutes(hours, minutes)} y {platesDetail.reduce((acc, p) => acc + (parseFloat(p.grams) || 0), 0).toFixed(1)}g en {platesDetail.length} {platesDetail.length === 1 ? 'placa' : 'placas'}.
+              </Text>
+            </View>
+          </View>
+        )}
       </View>
 
       {/* Filamentos Usados (Colores múltiples) */}
@@ -556,6 +762,20 @@ export default function Calculadora3DTab({
       {/* DESGLOSE Y COSTO FINAL DEL LOTE */}
       <View style={styles.summaryCard}>
         <Text style={styles.summaryTitle}>Desglose de Costos del Trabajo</Text>
+
+        {platesDetail.length > 1 && (
+          <View style={styles.platesBatchSummaryBox}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+              <Ionicons name="layers" size={16} color="#a5b4fc" style={{ marginRight: 6 }} />
+              <Text style={styles.platesBatchSummaryTitle}>
+                Lote Multi-Placa: {platesDetail.length} Placas sumadas ({formatHoursMinutes(hours, minutes)} totales)
+              </Text>
+            </View>
+            <Text style={styles.platesBatchSummarySubtitle}>
+              {platesDetail.map((p) => `${p.name}: ${p.hours}h ${p.minutes}m (${p.grams}g)`).join(' • ')}
+            </Text>
+          </View>
+        )}
 
         <View style={styles.breakdownRow}>
           <Text style={styles.breakdownLabel}>Filamentos ({totalFilamentGrams.toFixed(1)}g):</Text>
@@ -1296,5 +1516,142 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 15,
     fontWeight: '700',
+  },
+  platesToggleBtn: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#f1f5f9',
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginTop: 12,
+  },
+  platesToggleBtnActive: {
+    backgroundColor: '#eef2ff',
+    borderWidth: 1,
+    borderColor: '#c7d2fe',
+  },
+  platesToggleText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  platesToggleTextActive: {
+    color: '#4f46e5',
+  },
+  platesContainer: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 10,
+    padding: 12,
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  platesContainerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  platesContainerTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  addPlateSmallBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    backgroundColor: '#eef2ff',
+    borderRadius: 6,
+  },
+  addPlateSmallBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#4f46e5',
+  },
+  plateItemBox: {
+    backgroundColor: '#ffffff',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  plateItemHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  plateNameInput: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1e293b',
+    borderBottomWidth: 1,
+    borderBottomColor: '#cbd5e1',
+    paddingVertical: 2,
+    flex: 1,
+    marginRight: 8,
+  },
+  plateFieldsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  timeInputBoxSmall: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    height: 36,
+    marginRight: 4,
+  },
+  timeInputSmall: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0f172a',
+    textAlign: 'center',
+    padding: 0,
+  },
+  unitTextSmall: {
+    fontSize: 11,
+    color: '#64748b',
+    marginLeft: 2,
+  },
+  platesSummaryNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ecfdf5',
+    padding: 8,
+    borderRadius: 6,
+    marginTop: 4,
+  },
+  platesSummaryNoticeText: {
+    fontSize: 12,
+    color: '#065f46',
+    fontWeight: '600',
+  },
+  platesBatchSummaryBox: {
+    backgroundColor: '#312e81',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 12,
+  },
+  platesBatchSummaryTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#c7d2fe',
+  },
+  platesBatchSummarySubtitle: {
+    fontSize: 11,
+    color: '#e0e7ff',
+    lineHeight: 16,
   },
 });

@@ -39,3 +39,9 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# OCR data and logs
+*.traineddata
+*.log
+test-*.js
+qr_*.png

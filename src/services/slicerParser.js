@@ -1,15 +1,9 @@
 /**
  * Analizador y extractor OCR para capturas de Bambu Studio / OrcaSlicer / Bambu Handy
- * Ejecución 100% en el dispositivo del usuario (local, segura y sin costos)
+ * Con soporte robusto para múltiples placas, tablas de placas y resumen global.
  */
 import { createWorker } from 'tesseract.js';
 
-/**
- * Procesa una imagen con Tesseract.js
- * @param {string|File|Blob} imageSource - URL en base64, Blob o File
- * @param {Function} onProgress - Callback de avance (0-100%)
- * @returns {Promise<string>} Texto extraído
- */
 export async function extractTextFromImage(imageSource, onProgress = () => {}) {
   try {
     onProgress({ status: 'Iniciando motor OCR local...', progress: 0.1 });
@@ -24,8 +18,7 @@ export async function extractTextFromImage(imageSource, onProgress = () => {}) {
 
     return ret.data.text || '';
   } catch (error) {
-    console.warn('Error en Tesseract OCR, reintentando con fallback:', error);
-    // Intento con sólo 'eng' si 'spa+eng' falla
+    console.warn('Error en Tesseract OCR con spa+eng, reintentando con eng:', error);
     try {
       const worker = await createWorker('eng');
       const ret = await worker.recognize(imageSource);
@@ -33,71 +26,110 @@ export async function extractTextFromImage(imageSource, onProgress = () => {}) {
       return ret.data.text || '';
     } catch (err2) {
       console.error('Error definitivo en OCR:', err2);
-      throw new Error('No se pudo procesar la imagen automáticamente. Puedes ingresar los datos manualmente.');
+      throw new Error('No se pudo procesar la imagen automáticamente.');
     }
   }
 }
 
 /**
- * Analiza el texto en bruto y extrae campos de Bambu Studio
- * @param {string} rawText 
- * @returns {Object} Datos extraídos estructurados
+ * Analiza el texto en bruto de Bambu Studio con detección avanzada de múltiples placas
  */
 export function parseBambuStudioText(rawText) {
   if (!rawText || typeof rawText !== 'string') {
     return createEmptyParseResult();
   }
 
-  const lines = rawText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  const normalizedText = rawText.replace(/,/g, '.'); // Normalizar decimales con punto
+  // Normalizar comas a puntos decimales
+  const normalizedText = rawText.replace(/(\d+),(\d+)/g, '$1.$2');
+  const lines = normalizedText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
 
-  // 1. Detección de Tiempo de Impresión
-  const timeResult = parsePrintTime(normalizedText);
+  // 1. Detección de tablas por Placas individuales (multi-línea, tablas o bloques)
+  const platesDetected = parseIndividualPlates(lines, normalizedText);
 
-  // 2. Detección de Placas
-  const platesResult = parsePlates(normalizedText);
+  // 2. Detección de Tiempo Total Global explícito
+  const explicitTotalTime = parseExplicitTotalTime(normalizedText);
 
-  // 3. Detección de Desglose de Desperdicio (Soportes, Purga, Torre)
+  // 3. Detección de Gramos Totales Globales explícitos
+  const explicitTotalGrams = parseExplicitTotalGrams(normalizedText);
+
+  // 4. Detección de Desglose de Desperdicio (Modelo, Soportes, Purga, Torre)
   const wasteBreakdown = parseWasteBreakdown(normalizedText);
 
-  // 4. Detección de Filamentos y Colores
+  // 5. Detección de Filamentos individuales / colores
   const filamentsList = parseFilaments(lines, normalizedText);
 
-  // 5. Total de gramos y verificación de duplicidad
-  const totalGramsDetected = parseTotalGrams(normalizedText);
+  // 6. Tiempo y gramos de fallback si no hay explícito
+  const fallbackTime = parsePrintTime(normalizedText);
 
-  // Regla importante de Bambu Studio:
-  // Si la captura muestra un Total explícito o una lista de slots donde el total ya suma purga/soportes,
-  // evitamos contar dos veces el material.
-  let isTotalAlreadyIncludingWaste = false;
+  let finalHours = 0;
+  let finalMinutes = 0;
   let finalGrams = 0;
+  let platesList = [];
+  let calculatedPlatesCount = 1;
+  const isTotalAlreadyIncludingWaste = true;
 
-  if (totalGramsDetected > 0) {
-    finalGrams = totalGramsDetected;
-    isTotalAlreadyIncludingWaste = true;
-  } else if (filamentsList.length > 0) {
-    finalGrams = filamentsList.reduce((sum, f) => sum + (parseFloat(f.grams) || 0), 0);
-    // Si la suma de filamentos es mayor que solo el modelo y se detectó purga/soportes,
-    // significa que los slots ya incluyen la purga
-    if (wasteBreakdown.modelGrams > 0 && finalGrams >= wasteBreakdown.modelGrams) {
-      isTotalAlreadyIncludingWaste = true;
+  if (platesDetected.length > 0) {
+    calculatedPlatesCount = platesDetected.length;
+    platesList = platesDetected;
+
+    const sumPlatesMins = platesDetected.reduce((acc, p) => acc + ((p.hours || 0) * 60 + (p.minutes || 0)), 0);
+    const sumPlatesGrams = platesDetected.reduce((acc, p) => acc + (parseFloat(p.grams) || 0), 0);
+
+    // Si hay un tiempo total explícito que sea mayor o igual a la suma
+    const explicitTotalMins = explicitTotalTime ? (explicitTotalTime.hours * 60 + explicitTotalTime.minutes) : 0;
+    const bestMins = Math.max(sumPlatesMins, explicitTotalMins);
+
+    finalHours = Math.floor(bestMins / 60);
+    finalMinutes = bestMins % 60;
+
+    finalGrams = Math.max(sumPlatesGrams, explicitTotalGrams);
+  } else {
+    // Si no vino desglose por filas de placa, buscar "3 placas" o "Placa 1 de 3"
+    const generalPlates = parseGeneralPlatesCount(normalizedText);
+    calculatedPlatesCount = generalPlates.totalPlates || 1;
+
+    if (explicitTotalTime) {
+      finalHours = explicitTotalTime.hours;
+      finalMinutes = explicitTotalTime.minutes;
+    } else {
+      finalHours = fallbackTime.hours;
+      finalMinutes = fallbackTime.minutes;
     }
-  } else if (wasteBreakdown.modelGrams > 0) {
-    // Si solo leyó modelo y desglose
-    finalGrams = wasteBreakdown.modelGrams + wasteBreakdown.supportGrams + wasteBreakdown.flushGrams + wasteBreakdown.towerGrams;
-    isTotalAlreadyIncludingWaste = true;
+
+    if (explicitTotalGrams > 0) {
+      finalGrams = explicitTotalGrams;
+    } else if (filamentsList.length > 0) {
+      finalGrams = filamentsList.reduce((sum, f) => sum + (parseFloat(f.grams) || 0), 0);
+    } else if (wasteBreakdown.modelGrams > 0) {
+      finalGrams = wasteBreakdown.modelGrams + wasteBreakdown.supportGrams + wasteBreakdown.flushGrams + wasteBreakdown.towerGrams;
+    }
+
+    // Distribuir entre las placas detectadas
+    platesList = generateDefaultPlatesList(calculatedPlatesCount, finalGrams, { hours: finalHours, minutes: finalMinutes });
   }
 
-  // Comprobar qué datos faltan para solicitarlos al usuario
+  // Si los filamentos detectados tienen gramos
+  let finalFilaments = filamentsList;
+  if (finalFilaments.length === 0 && finalGrams > 0) {
+    finalFilaments = [
+      {
+        name: 'Filamento 1',
+        color: 'Color Principal',
+        grams: Number(finalGrams.toFixed(1)),
+      },
+    ];
+  }
+
   const missingFields = [];
   if (finalGrams <= 0) missingFields.push('Gramos de filamento');
-  if (timeResult.hours === 0 && timeResult.minutes === 0) missingFields.push('Tiempo de impresión');
+  if (finalHours === 0 && finalMinutes === 0) missingFields.push('Tiempo de impresión');
 
   return {
     rawText,
-    time: timeResult,
-    plates: platesResult,
-    filaments: filamentsList.length > 0 ? filamentsList : (finalGrams > 0 ? [{ name: 'Filamento 1', color: 'Detectado', grams: finalGrams }] : []),
+    time: { hours: finalHours, minutes: finalMinutes, raw: `${finalHours}h ${finalMinutes}m` },
+    platesCount: calculatedPlatesCount,
+    platesList,
+    filaments: finalFilaments,
     wasteBreakdown,
     totalGrams: Number(finalGrams.toFixed(1)),
     isTotalAlreadyIncludingWaste,
@@ -107,11 +139,91 @@ export function parseBambuStudioText(rawText) {
 }
 
 /**
- * Extrae horas y minutos del texto
+ * Detecta filas de placas específicas tipo:
+ * Bloques multi-línea ("Placa 1\n1h 45m\n45.2g") o en línea ("Placa 1: 1h 45m, 45.2g")
  */
-function parsePrintTime(text) {
-  // Patrón 1: "1d 4h 25m" o "2d 5h"
-  const dayMatch = text.match(/(\d+)\s*(?:d|día|dias)\s*(?:(\d+)\s*(?:h|hr|hrs|horas?))?\s*(?:(\d+)\s*(?:m|min|mins?))?/i);
+export function parseIndividualPlates(lines, fullText) {
+  const plates = [];
+  
+  // Estrategia 1: Detección por bloques de líneas
+  const plateIndices = [];
+  lines.forEach((line, idx) => {
+    const match = line.match(/(?:placa|plate|cama)\s*#?\s*(\d+)/i) || 
+                  line.match(/^#?\s*(\d+)\s*(?:placa|plate|cama)\b/i) ||
+                  line.match(/^(?:placa|plate)\s*(\d+)/i);
+    if (match) {
+      plateIndices.push({ index: idx, plateNum: parseInt(match[1], 10), line });
+    }
+  });
+
+  if (plateIndices.length > 0) {
+    for (let i = 0; i < plateIndices.length; i++) {
+      const current = plateIndices[i];
+      const nextIndex = (i + 1 < plateIndices.length) ? plateIndices[i + 1].index : lines.length;
+      
+      // Tomar las líneas del bloque actual, cortando si encuentra resumen total
+      const rawBlockLines = lines.slice(current.index, Math.min(nextIndex, current.index + 6));
+      const cleanBlockLines = [];
+      for (const bLine of rawBlockLines) {
+        if (/^(?:tiempo\s*total|total\s*(?:print\s*)?time|filamento\s*total|total\s*:)/i.test(bLine) && cleanBlockLines.length > 0) {
+          break;
+        }
+        cleanBlockLines.push(bLine);
+      }
+      const blockText = cleanBlockLines.join(' ');
+
+      // Gramos de la placa
+      const gMatch = blockText.match(/(\d+[\.]?\d*)\s*(?:g|gr|gramos|grams)\b/i);
+      const grams = gMatch ? parseFloat(gMatch[1]) : 0;
+
+      // Tiempo de la placa
+      const time = parsePrintTime(blockText);
+
+      plates.push({
+        id: `plate-${current.plateNum}-${Date.now()}-${i}`,
+        plateNumber: current.plateNum,
+        name: `Placa ${current.plateNum}`,
+        hours: time.hours,
+        minutes: time.minutes,
+        grams: grams,
+        notes: blockText.slice(0, 80),
+      });
+    }
+
+    return plates.sort((a, b) => a.plateNumber - b.plateNumber);
+  }
+
+  // Estrategia 2: Formato tabla tipo "1   1h 30m   45.2g"
+  const tableRowRegex = /^(\d+)\s+.*?(\d+\s*(?:h|hr|hrs)\s*\d*\s*(?:m|min)?|\d+\s*(?:m|min))\s+.*?(\d+[\.]?\d*)\s*(?:g|gr)\b/i;
+  lines.forEach((line) => {
+    const m = line.match(tableRowRegex);
+    if (m) {
+      const plateNum = parseInt(m[1], 10);
+      const time = parsePrintTime(m[2]);
+      const grams = parseFloat(m[3]) || 0;
+      plates.push({
+        id: `plate-${plateNum}-${Date.now()}`,
+        plateNumber: plateNum,
+        name: `Placa ${plateNum}`,
+        hours: time.hours,
+        minutes: time.minutes,
+        grams: grams,
+        notes: line,
+      });
+    }
+  });
+
+  return plates.sort((a, b) => a.plateNumber - b.plateNumber);
+}
+
+/**
+ * Detecta horas y minutos en múltiples formatos de Bambu Studio / Slicers
+ */
+export function parsePrintTime(text) {
+  if (!text) return { hours: 0, minutes: 0, raw: '' };
+
+  // Formato: "1d 4h 25m"
+  const dayMatch = text.match(/(\d+)\s*(?:d|día|dias|day|days)\s*(?:(\d+)\s*(?:h|hr|hrs|horas?))?\s*(?:(\d+)\s*(?:m|min|mins?))?/i);
   if (dayMatch) {
     const days = parseInt(dayMatch[1], 10) || 0;
     const hours = (parseInt(dayMatch[2], 10) || 0) + (days * 24);
@@ -119,8 +231,8 @@ function parsePrintTime(text) {
     return { hours, minutes, raw: dayMatch[0] };
   }
 
-  // Patrón 2: "2h 45m" o "1h45m" o "3 hr 12 min"
-  const hmMatch = text.match(/(\d+)\s*(?:h|hr|hrs|horas?|:)\s*(\d+)\s*(?:m|min|mins?)/i);
+  // Formato: "2h 45m" o "2h45m" o "3 hr 12 min"
+  const hmMatch = text.match(/(\d+)\s*(?:h|hr|hrs|horas?)\s*(\d+)\s*(?:m|min|mins?)/i);
   if (hmMatch) {
     return {
       hours: parseInt(hmMatch[1], 10) || 0,
@@ -129,7 +241,17 @@ function parsePrintTime(text) {
     };
   }
 
-  // Patrón 3: Solo minutos "45m" o "52 min"
+  // Formato: Solo horas "2h" o "3 hrs"
+  const onlyHoursMatch = text.match(/(\d+)\s*(?:h|hr|hrs|horas?)(?!\s*\d+\s*(?:m|min))/i);
+  if (onlyHoursMatch) {
+    return {
+      hours: parseInt(onlyHoursMatch[1], 10) || 0,
+      minutes: 0,
+      raw: onlyHoursMatch[0],
+    };
+  }
+
+  // Formato: Solo minutos "45m" o "52 min"
   const mMatch = text.match(/(?:tiempo|time)?\s*[:\-]?\s*(\d+)\s*(?:m|min|mins?)(?!\s*h)/i);
   if (mMatch) {
     return {
@@ -139,7 +261,7 @@ function parsePrintTime(text) {
     };
   }
 
-  // Patrón 4: Formato HH:MM:SS o HH:MM
+  // Formato digital HH:MM:SS o HH:MM (ej: "03:45:12" o "02:30")
   const clockMatch = text.match(/\b(\d{1,2}):(\d{2})(?::(\d{2}))?\b/);
   if (clockMatch) {
     return {
@@ -153,43 +275,64 @@ function parsePrintTime(text) {
 }
 
 /**
- * Extrae conteo de placas
+ * Busca específicamente "Tiempo total" en el texto
  */
-function parsePlates(text) {
-  // Ej: "Placa 1/2" o "Plate 2 of 3" o "Placa 1 de 4"
-  const plateMatch = text.match(/(?:placa|plate)\s*(\d+)\s*(?:\/|de|of)\s*(\d+)/i);
-  if (plateMatch) {
-    return {
-      currentPlate: parseInt(plateMatch[1], 10) || 1,
-      totalPlates: parseInt(plateMatch[2], 10) || 1,
-      raw: plateMatch[0],
-    };
-  }
-
-  // Ej: "2 placas" o "Total placas: 3"
-  const totalMatch = text.match(/(?:total\s*(?:de\s*)?placas?|placas?)\s*[:\-]?\s*(\d+)/i);
+export function parseExplicitTotalTime(text) {
+  if (!text) return null;
+  const totalMatch = text.match(/(?:tiempo\s*total|total\s*(?:print\s*)?time|total\s*de\s*impresi[oó]n|tiempo\s*estimado\s*total)\s*[:\-]?\s*([^\r\n]+)/i);
   if (totalMatch) {
-    return {
-      currentPlate: 1,
-      totalPlates: parseInt(totalMatch[1], 10) || 1,
-      raw: totalMatch[0],
-    };
+    const parsed = parsePrintTime(totalMatch[1]);
+    if (parsed.hours > 0 || parsed.minutes > 0) return parsed;
   }
-
-  return { currentPlate: 1, totalPlates: 1, raw: '1 placa (por defecto)' };
+  return null;
 }
 
 /**
- * Extrae el desglose de desperdicios si están detallados
+ * Busca específicamente gramos totales en el texto
+ */
+export function parseExplicitTotalGrams(text) {
+  if (!text) return 0;
+  const totalMatch = text.match(/(?:filamento\s*total|total\s*filament|peso\s*total|total\s*weight|peso\s*del\s*modelo\s*total)\s*[:\-]?\s*(\d+[\.]?\d*)\s*(?:g|gr|gramos|grams)\b/i);
+  if (totalMatch) {
+    return parseFloat(totalMatch[1]) || 0;
+  }
+  const generalTotal = text.match(/\btotal\s*[:\-]?\s*(\d+[\.]?\d*)\s*(?:g|gr|gramos|grams)\b/i);
+  if (generalTotal) {
+    return parseFloat(generalTotal[1]) || 0;
+  }
+  return 0;
+}
+
+/**
+ * Conteo global de placas (ej: "Total placas: 3", "3 placas", "Plate 1 of 3")
+ */
+function parseGeneralPlatesCount(text) {
+  const plateOfMatch = text.match(/(?:placa|plate)\s*(\d+)\s*(?:\/|de|of)\s*(\d+)/i);
+  if (plateOfMatch) {
+    return {
+      currentPlate: parseInt(plateOfMatch[1], 10) || 1,
+      totalPlates: parseInt(plateOfMatch[2], 10) || 1,
+    };
+  }
+
+  const countMatch = text.match(/(\d+)\s*(?:placas?|plates?)\b/i);
+  if (countMatch) {
+    return {
+      currentPlate: 1,
+      totalPlates: parseInt(countMatch[1], 10) || 1,
+    };
+  }
+
+  return { currentPlate: 1, totalPlates: 1 };
+}
+
+/**
+ * Desglose de desperdicios (modelo, soportes, purga, torre)
  */
 function parseWasteBreakdown(text) {
-  // Modelo: "Modelo: 35.2g"
   const modelMatch = text.match(/(?:modelo|model)\s*[:\-]?\s*(\d+[\.]?\d*)\s*g/i);
-  // Soportes: "Soportes: 4.8g" o "Support"
   const supportMatch = text.match(/(?:soportes?|support(?:s)?)\s*[:\-]?\s*(\d+[\.]?\d*)\s*g/i);
-  // Purga / Flush: "Purga: 12.0g" o "Flush"
   const flushMatch = text.match(/(?:purga|flush)\s*[:\-]?\s*(\d+[\.]?\d*)\s*g/i);
-  // Torre de purga / Prime tower: "Torre: 3.5g" o "Prime tower"
   const towerMatch = text.match(/(?:torre(?: de purga)?|prime tower|tower)\s*[:\-]?\s*(\d+[\.]?\d*)\s*g/i);
 
   return {
@@ -202,24 +345,21 @@ function parseWasteBreakdown(text) {
 }
 
 /**
- * Extrae lista de filamentos individuales o colores por slot
+ * Extrae lista de filamentos / colores
  */
 function parseFilaments(lines, fullText) {
   const filaments = [];
 
-  // Buscar líneas tipo: "1. PLA Basic Black 42.15g" o "Slot 1: 30g" o "Negro: 25.4 g"
   lines.forEach((line) => {
-    // Si la línea contiene gramos
     const gMatch = line.match(/(\d+[\.]?\d*)\s*g\b/i);
     if (gMatch) {
       const grams = parseFloat(gMatch[1]);
-      // Ignorar si es "Total: XXg" o "Model: XXg" para no confundirlo con un color
-      if (/total|modelo|model|soportes?|support|purga|flush|torre|tower|cost|precio/i.test(line)) {
+      // Ignorar líneas de resumen
+      if (/total|modelo|model|soportes?|support|purga|flush|torre|tower|cost|precio|placa|plate/i.test(line)) {
         return;
       }
 
       if (grams > 0 && grams < 5000) {
-        // Limpiar el nombre del filamento
         let name = line.replace(/(\d+[\.]?\d*)\s*g.*/i, '')
           .replace(/[#\(\)\[\]\:]/g, ' ')
           .trim();
@@ -239,36 +379,67 @@ function parseFilaments(lines, fullText) {
 }
 
 /**
- * Extrae el total explícito de gramos
+ * Genera lista de placas por defecto cuando solo se detecta el número total
  */
-function parseTotalGrams(text) {
-  // Patrón "Total: 58.2g" o "Total de filamento: 45.0 g" o "Weight: 45g"
-  const totalMatch = text.match(/(?:total(?: de filamento)?|peso(?: total)?|weight)\s*[:\-]?\s*(\d+[\.]?\d*)\s*g/i);
-  if (totalMatch) {
-    return parseFloat(totalMatch[1]) || 0;
+function generateDefaultPlatesList(count, totalGrams, timeResult) {
+  const plates = [];
+  const validCount = Math.max(1, count);
+  const gramsPerPlate = validCount > 0 ? Number((totalGrams / validCount).toFixed(1)) : totalGrams;
+  
+  const totalMinutes = ((timeResult?.hours || 0) * 60) + (timeResult?.minutes || 0);
+  const minsPerPlate = validCount > 0 ? Math.floor(totalMinutes / validCount) : totalMinutes;
+
+  for (let i = 1; i <= validCount; i++) {
+    plates.push({
+      id: `plate-${i}-${Date.now()}`,
+      plateNumber: i,
+      name: `Placa ${i}`,
+      hours: Math.floor(minsPerPlate / 60),
+      minutes: minsPerPlate % 60,
+      grams: gramsPerPlate,
+      notes: '',
+    });
   }
-  return 0;
+  return plates;
 }
 
 /**
- * Combina resultados de varias fotos (por ejemplo múltiples placas)
- * @param {Array<Object>} resultsList 
- * @returns {Object}
+ * Combina resultados de varias fotos (múltiples capturas de placas)
  */
 export function combineMultipleSlicerResults(resultsList) {
   if (!resultsList || resultsList.length === 0) return createEmptyParseResult();
   if (resultsList.length === 1) return resultsList[0];
 
   let totalMinutes = 0;
-  let totalPlates = 0;
+  const combinedPlates = [];
   const mergedFilaments = [];
   let totalGrams = 0;
 
   resultsList.forEach((res, idx) => {
     const mins = ((res.time?.hours || 0) * 60) + (res.time?.minutes || 0);
     totalMinutes += mins;
-    totalPlates += (res.plates?.totalPlates || 1);
     totalGrams += (res.totalGrams || 0);
+
+    if (res.platesList && res.platesList.length > 0) {
+      res.platesList.forEach((p) => {
+        combinedPlates.push({
+          ...p,
+          id: `comb-plate-${combinedPlates.length + 1}`,
+          plateNumber: combinedPlates.length + 1,
+          name: `Placa ${combinedPlates.length + 1}`,
+        });
+      });
+    } else {
+      combinedPlates.push({
+        id: `comb-plate-${combinedPlates.length + 1}`,
+        plateNumber: combinedPlates.length + 1,
+        name: `Placa ${combinedPlates.length + 1} (Foto ${idx + 1})`,
+        hours: res.time?.hours || 0,
+        minutes: res.time?.minutes || 0,
+        grams: res.totalGrams || 0,
+        notes: '',
+      });
+    }
 
     if (res.filaments && Array.isArray(res.filaments)) {
       res.filaments.forEach((f) => {
@@ -287,8 +458,9 @@ export function combineMultipleSlicerResults(resultsList) {
 
   return {
     rawText: `Combinación de ${resultsList.length} capturas / placas`,
-    time: { hours: finalHours, minutes: finalMins, raw: `${finalHours}h ${finalMins}m (Suma de placas)` },
-    plates: { currentPlate: 1, totalPlates, raw: `${totalPlates} placas combinadas` },
+    time: { hours: finalHours, minutes: finalMins, raw: `${finalHours}h ${finalMins}m` },
+    platesCount: combinedPlates.length,
+    platesList: combinedPlates,
     filaments: mergedFilaments.length > 0 ? mergedFilaments : [{ name: 'Filamento Total', color: 'Múltiple', grams: Number(totalGrams.toFixed(1)) }],
     totalGrams: Number(totalGrams.toFixed(1)),
     isTotalAlreadyIncludingWaste: true,
@@ -301,7 +473,8 @@ function createEmptyParseResult() {
   return {
     rawText: '',
     time: { hours: 0, minutes: 0, raw: '' },
-    plates: { currentPlate: 1, totalPlates: 1, raw: '1 placa' },
+    platesCount: 1,
+    platesList: [{ id: 'plate-1', plateNumber: 1, name: 'Placa 1', hours: 0, minutes: 0, grams: 0, notes: '' }],
     filaments: [],
     wasteBreakdown: { modelGrams: 0, supportGrams: 0, flushGrams: 0, towerGrams: 0, hasBreakdown: false },
     totalGrams: 0,

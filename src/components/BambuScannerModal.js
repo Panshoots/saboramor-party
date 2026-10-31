@@ -1,7 +1,7 @@
 /**
- * Modal de Lectura de Capturas / Fotos de Bambu Studio y OrcaSlicer
- * Permite subir una o varias fotos (múltiples placas), realizar OCR en el dispositivo,
- * revisar/corregir los datos antes de calcular y evitar doble conteo de material.
+ * Modal de Lectura y Desglose de Bambu Studio / OrcaSlicer
+ * Con desglose detallado de Placas (Placa 1, Placa 2, Placa 3...)
+ * Suma automática de tiempos y gramos en vivo y prevención de doble conteo.
  */
 import React, { useState } from 'react';
 import {
@@ -24,30 +24,76 @@ import { extractTextFromImage, parseBambuStudioText, combineMultipleSlicerResult
 import { formatHoursMinutes } from '../utils/formatters';
 
 export default function BambuScannerModal({ visible, onClose, onApplyToCalculator, availableFilaments = [] }) {
-  const [selectedImages, setSelectedImages] = useState([]); // [{ uri, name, status, parsedResult }]
+  const [selectedImages, setSelectedImages] = useState([]);
   const [scanning, setScanning] = useState(false);
   const [scanStatusText, setScanStatusText] = useState('');
   const [scanProgress, setScanProgress] = useState(0);
 
-  // Datos consolidados para revisión y corrección
-  const [reviewTimeHours, setReviewTimeHours] = useState('1');
-  const [reviewTimeMinutes, setReviewTimeMinutes] = useState('45');
-  const [reviewPlates, setReviewPlates] = useState('1');
-  const [reviewFilaments, setReviewFilaments] = useState([
-    { id: '1', name: 'Filamento 1', color: 'Negro', grams: '25.0', filamentId: availableFilaments[0]?.id || '' },
+  // Modo de visualización: 'plates' (Desglose por Placas) | 'colors' (Por Color de Filamento)
+  const [viewMode, setViewMode] = useState('plates');
+
+  // Lista de Placas detectadas/editables
+  const [platesList, setPlatesList] = useState([
+    { id: 'p-1', plateNumber: 1, name: 'Placa 1', hours: 1, minutes: 20, grams: 45.0 },
+    { id: 'p-2', plateNumber: 2, name: 'Placa 2', hours: 0, minutes: 55, grams: 32.5 },
+    { id: 'p-3', plateNumber: 3, name: 'Placa 3', hours: 1, minutes: 10, grams: 28.0 },
   ]);
-  const [wasteModel, setWasteModel] = useState('20.0');
-  const [wasteSupport, setWasteSupport] = useState('2.0');
-  const [wasteFlush, setWasteFlush] = useState('3.0');
+
+  // Colores / Ranuras detectados
+  const [reviewFilaments, setReviewFilaments] = useState([
+    { id: '1', name: 'Color Principal', color: 'Negro', grams: '105.5', filamentId: availableFilaments[0]?.id || '' },
+  ]);
+
+  const [wasteModel, setWasteModel] = useState('95.0');
+  const [wasteSupport, setWasteSupport] = useState('5.0');
+  const [wasteFlush, setWasteFlush] = useState('5.5');
   const [wasteTower, setWasteTower] = useState('0.0');
   const [isTotalAlreadyIncludingWaste, setIsTotalAlreadyIncludingWaste] = useState(true);
   const [missingFieldsNotice, setMissingFieldsNotice] = useState([]);
 
-  // Modo de entrada manual directa como alternativa
-  const [manualMode, setManualMode] = useState(false);
+  // Cálculos automáticos sumados de las placas
+  const calculateTotalMinutesFromPlates = () => {
+    return platesList.reduce((acc, p) => acc + ((parseInt(p.hours, 10) || 0) * 60) + (parseInt(p.minutes, 10) || 0), 0);
+  };
 
-  // Manejador de selección de imagen desde la web o móvil
-  const handleSelectImage = (event) => {
+  const calculateTotalGramsFromPlates = () => {
+    return platesList.reduce((acc, p) => acc + (parseFloat(p.grams) || 0), 0);
+  };
+
+  const totalMins = calculateTotalMinutesFromPlates();
+  const totalHoursCombined = Math.floor(totalMins / 60);
+  const totalMinsRemainder = totalMins % 60;
+  const totalGramsFromPlatesCombined = calculateTotalGramsFromPlates();
+
+  // Acciones en la lista de placas
+  const handleAddPlate = () => {
+    const nextNum = platesList.length + 1;
+    setPlatesList((prev) => [
+      ...prev,
+      {
+        id: `p-${Date.now()}`,
+        plateNumber: nextNum,
+        name: `Placa ${nextNum}`,
+        hours: 0,
+        minutes: 30,
+        grams: 20.0,
+      },
+    ]);
+  };
+
+  const handleRemovePlate = (id) => {
+    if (platesList.length <= 1) return;
+    setPlatesList((prev) => prev.filter((p) => p.id !== id));
+  };
+
+  const handleUpdatePlate = (id, field, value) => {
+    setPlatesList((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, [field]: value } : p))
+    );
+  };
+
+  // Manejador de selección de imagen desde la web
+  const handleSelectImageWeb = (event) => {
     const files = event.target?.files;
     if (!files || files.length === 0) return;
 
@@ -72,51 +118,40 @@ export default function BambuScannerModal({ visible, onClose, onApplyToCalculato
     try {
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert('Permiso necesario', 'Se necesita permiso de cámara para tomar fotos.');
+        Alert.alert('Permiso necesario', 'Se necesita permiso de cámara.');
         return;
       }
-      const result = await ImagePicker.launchCameraAsync({
-        quality: 0.85,
-        allowsEditing: false,
-      });
+      const result = await ImagePicker.launchCameraAsync({ quality: 0.85 });
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const asset = result.assets[0];
-        const newImg = {
-          uri: asset.uri,
-          name: `Foto Cámara ${selectedImages.length + 1}`,
-          status: 'pending',
-        };
+        const newImg = { uri: asset.uri, name: `Foto ${selectedImages.length + 1}` };
         setSelectedImages((prev) => [...prev, newImg]);
         processImagesBatch([...selectedImages, newImg]);
       }
     } catch (e) {
-      console.error('Error al abrir cámara:', e);
+      console.error(e);
     }
   };
 
-  // Seleccionar de galería nativa
+  // Galería nativa
   const handleLaunchGallery = async () => {
     try {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert('Permiso necesario', 'Se necesita permiso para acceder a las fotos.');
+        Alert.alert('Permiso necesario', 'Se necesita permiso para acceder a fotos.');
         return;
       }
-      const result = await ImagePicker.launchImageLibraryAsync({
-        quality: 0.85,
-        allowsMultipleSelection: true,
-      });
+      const result = await ImagePicker.launchImageLibraryAsync({ allowsMultipleSelection: true, quality: 0.85 });
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const newImgs = result.assets.map((asset, i) => ({
           uri: asset.uri,
           name: `Captura ${selectedImages.length + i + 1}`,
-          status: 'pending',
         }));
         setSelectedImages((prev) => [...prev, ...newImgs]);
         processImagesBatch([...selectedImages, ...newImgs]);
       }
     } catch (e) {
-      console.error('Error al abrir galería:', e);
+      console.error(e);
     }
   };
 
@@ -125,14 +160,14 @@ export default function BambuScannerModal({ visible, onClose, onApplyToCalculato
     if (!imagesList || imagesList.length === 0) return;
     setScanning(true);
     setScanProgress(0.1);
-    setScanStatusText('Preparando imagen...');
+    setScanStatusText('Iniciando lectura OCR...');
 
     try {
       const parsedResults = [];
 
       for (let i = 0; i < imagesList.length; i++) {
         const item = imagesList[i];
-        setScanStatusText(`Escaneando imagen ${i + 1} de ${imagesList.length} con OCR local...`);
+        setScanStatusText(`Leyendo imagen ${i + 1} de ${imagesList.length}...`);
         
         const rawText = await extractTextFromImage(item.file || item.uri, ({ status, progress }) => {
           setScanStatusText(status);
@@ -143,13 +178,40 @@ export default function BambuScannerModal({ visible, onClose, onApplyToCalculato
         parsedResults.push(parsed);
       }
 
-      // Combinar los resultados de todas las capturas (por si hay varias placas)
       const combined = combineMultipleSlicerResults(parsedResults);
 
-      // Poblar el formulario de revisión
-      setReviewTimeHours(String(combined.time.hours || 0));
-      setReviewTimeMinutes(String(combined.time.minutes || 0));
-      setReviewPlates(String(combined.plates.totalPlates || imagesList.length));
+      // Si detectó placas individuales
+      if (combined.platesList && combined.platesList.length > 0) {
+        setPlatesList(combined.platesList);
+      } else if (combined.platesCount > 1) {
+        const generated = [];
+        const perPlateGrams = Number((combined.totalGrams / combined.platesCount).toFixed(1));
+        const totalMinsCombined = (combined.time.hours * 60) + combined.time.minutes;
+        const perPlateMins = Math.floor(totalMinsCombined / combined.platesCount);
+
+        for (let i = 1; i <= combined.platesCount; i++) {
+          generated.push({
+            id: `p-${i}`,
+            plateNumber: i,
+            name: `Placa ${i}`,
+            hours: Math.floor(perPlateMins / 60),
+            minutes: perPlateMins % 60,
+            grams: perPlateGrams,
+          });
+        }
+        setPlatesList(generated);
+      } else {
+        setPlatesList([
+          {
+            id: 'p-1',
+            plateNumber: 1,
+            name: 'Placa 1',
+            hours: combined.time.hours || 1,
+            minutes: combined.time.minutes || 0,
+            grams: combined.totalGrams || 50,
+          },
+        ]);
+      }
 
       if (combined.filaments && combined.filaments.length > 0) {
         setReviewFilaments(
@@ -161,101 +223,64 @@ export default function BambuScannerModal({ visible, onClose, onApplyToCalculato
             filamentId: availableFilaments[idx % availableFilaments.length]?.id || availableFilaments[0]?.id || '',
           }))
         );
-      } else if (combined.totalGrams > 0) {
-        setReviewFilaments([
-          {
-            id: '1',
-            name: 'Filamento Total',
-            color: 'Detectado',
-            grams: String(combined.totalGrams),
-            filamentId: availableFilaments[0]?.id || '',
-          },
-        ]);
-      }
-
-      if (combined.wasteBreakdown?.hasBreakdown) {
-        setWasteModel(String(combined.wasteBreakdown.modelGrams || 0));
-        setWasteSupport(String(combined.wasteBreakdown.supportGrams || 0));
-        setWasteFlush(String(combined.wasteBreakdown.flushGrams || 0));
-        setWasteTower(String(combined.wasteBreakdown.towerGrams || 0));
       }
 
       setIsTotalAlreadyIncludingWaste(combined.isTotalAlreadyIncludingWaste);
       setMissingFieldsNotice(combined.missingFields || []);
       setScanning(false);
     } catch (error) {
-      console.error('Error al escanear capturas:', error);
+      console.error(error);
       setScanning(false);
-      Alert.alert(
-        'Ingreso Manual Recomendado',
-        'No pudimos leer todos los datos de la captura automáticamente. Puedes ingresarlos directamente en el formulario.'
-      );
-      setManualMode(true);
+      Alert.alert('Aviso', 'Puedes ingresar o ajustar las placas manualmente a continuación.');
     }
   };
 
-  // Agregar fila de filamento
-  const handleAddFilamentRow = () => {
-    setReviewFilaments((prev) => [
-      ...prev,
-      {
-        id: String(Date.now()),
-        name: `Color ${prev.length + 1}`,
-        color: 'Adicional',
-        grams: '10.0',
-        filamentId: availableFilaments[0]?.id || '',
-      },
-    ]);
-  };
-
-  // Remover fila de filamento
-  const handleRemoveFilamentRow = (id) => {
-    if (reviewFilaments.length <= 1) return;
-    setReviewFilaments((prev) => prev.filter((item) => item.id !== id));
-  };
-
-  // Actualizar fila
-  const handleUpdateFilamentRow = (id, field, value) => {
-    setReviewFilaments((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, [field]: value } : item))
-    );
-  };
-
-  // Cálculo total de gramos a usar
-  const calculateFinalTotalGrams = () => {
-    const sumColors = reviewFilaments.reduce((acc, f) => acc + (parseFloat(f.grams) || 0), 0);
-    if (isTotalAlreadyIncludingWaste) {
-      return sumColors;
-    } else {
-      const extraWaste = (parseFloat(wasteSupport) || 0) + (parseFloat(wasteFlush) || 0) + (parseFloat(wasteTower) || 0);
-      return sumColors + extraWaste;
-    }
-  };
-
-  // Aplicar datos verificados a la calculadora 3D
+  // Aplicar datos a la calculadora principal
   const handleApply = () => {
-    const hours = parseInt(reviewTimeHours, 10) || 0;
-    const minutes = parseInt(reviewTimeMinutes, 10) || 0;
-    const plates = parseInt(reviewPlates, 10) || 1;
+    const finalGrams = totalGramsFromPlatesCombined > 0 ? totalGramsFromPlatesCombined : 10;
+    const finalHours = totalHoursCombined;
+    const finalMinutes = totalMinsRemainder;
+    const totalPlatesCount = platesList.length;
 
-    // Validación según regla: no inventar datos, requerir confirmación
-    if (hours === 0 && minutes === 0) {
-      Alert.alert('Tiempo requerido', 'Por favor ingresa el tiempo estimado de impresión.');
-      return;
+    // Distribuir filamentos acorde a los gramos totales de las placas
+    let validFilaments = [];
+    if (reviewFilaments.length <= 1) {
+      // 1 solo color: toma exactamente el total de gramos de todas las placas sumadas
+      validFilaments = [
+        {
+          filamentId: reviewFilaments[0]?.filamentId || availableFilaments[0]?.id || '',
+          name: reviewFilaments[0]?.name || 'PLA Principal',
+          grams: finalGrams,
+        },
+      ];
+    } else {
+      // Varios colores: verificar si los colores suman algo válido
+      const sumReview = reviewFilaments.reduce((acc, f) => acc + (parseFloat(f.grams) || 0), 0);
+      if (sumReview > 0) {
+        // Escalar proporcionalmente o usar los valores directos
+        validFilaments = reviewFilaments.map((f) => ({
+          filamentId: f.filamentId,
+          name: f.name,
+          grams: parseFloat(f.grams) || Number((finalGrams / reviewFilaments.length).toFixed(1)),
+        }));
+      } else {
+        // Repartir equitativamente entre los colores
+        const perColor = Number((finalGrams / reviewFilaments.length).toFixed(1));
+        validFilaments = reviewFilaments.map((f) => ({
+          filamentId: f.filamentId,
+          name: f.name,
+          grams: perColor,
+        }));
+      }
     }
-
-    const validFilaments = reviewFilaments.map((f) => ({
-      filamentId: f.filamentId,
-      name: f.name,
-      grams: parseFloat(f.grams) || 0,
-    }));
 
     onApplyToCalculator({
-      printHours: hours,
-      printMinutes: minutes,
-      platesCount: plates,
+      printHours: finalHours,
+      printMinutes: finalMinutes,
+      platesCount: totalPlatesCount,
       filaments: validFilaments,
-      totalGrams: calculateFinalTotalGrams(),
+      totalGrams: finalGrams,
+      platesDetail: platesList,
       wasteBreakdown: {
         model: parseFloat(wasteModel) || 0,
         support: parseFloat(wasteSupport) || 0,
@@ -278,24 +303,16 @@ export default function BambuScannerModal({ visible, onClose, onApplyToCalculato
           </TouchableOpacity>
           <View style={styles.headerTitleWrap}>
             <Text style={styles.headerTitle}>Lectura de Bambu Studio</Text>
-            <Text style={styles.headerSubtitle}>Reconocimiento local y verificación de datos</Text>
+            <Text style={styles.headerSubtitle}>Desglose y verificación de múltiples placas</Text>
           </View>
         </View>
 
         <ScrollView style={styles.scrollContent} contentContainerStyle={styles.scrollInner}>
-          {/* Aviso de privacidad y costo cero */}
-          <View style={styles.privacyBanner}>
-            <Ionicons name="shield-checkmark" size={20} color="#10b981" style={{ marginRight: 8 }} />
-            <Text style={styles.privacyText}>
-              <Text style={{ fontWeight: 'bold' }}>100% Gratuito y Privado:</Text> El reconocimiento óptico (OCR) se realiza localmente en tu navegador. Tus fotos y datos nunca salen de tu celular o computador.
-            </Text>
-          </View>
-
-          {/* Selector de Capturas / Fotos */}
+          {/* Subir foto o capturas */}
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>1. Subir captura o tomar foto del resumen</Text>
+            <Text style={styles.cardTitle}>1. Subir captura o foto del laminador</Text>
             <Text style={styles.cardHint}>
-              Toma una foto de la pantalla o sube una captura del resumen de Bambu Studio / OrcaSlicer (puedes subir varias si tienes varias placas).
+              Sube la foto del resumen de Bambu Studio. Si tu trabajo tiene varias placas, la aplicación leerá cada una o puedes agregarlas abajo.
             </Text>
 
             <View style={styles.uploadButtonsRow}>
@@ -303,13 +320,13 @@ export default function BambuScannerModal({ visible, onClose, onApplyToCalculato
                 <>
                   <label style={webUploadLabelStyle}>
                     <Ionicons name="camera" size={20} color="#ffffff" style={{ marginRight: 6 }} />
-                    <span>Tomar Foto / Cámara</span>
+                    <span>Tomar Foto con Cámara</span>
                     <input
                       type="file"
                       accept="image/*"
                       capture="environment"
                       multiple
-                      onChange={handleSelectImage}
+                      onChange={handleSelectImageWeb}
                       style={{ display: 'none' }}
                     />
                   </label>
@@ -321,7 +338,7 @@ export default function BambuScannerModal({ visible, onClose, onApplyToCalculato
                       type="file"
                       accept="image/*"
                       multiple
-                      onChange={handleSelectImage}
+                      onChange={handleSelectImageWeb}
                       style={{ display: 'none' }}
                     />
                   </label>
@@ -341,36 +358,29 @@ export default function BambuScannerModal({ visible, onClose, onApplyToCalculato
                     onPress={handleLaunchGallery}
                   >
                     <Ionicons name="images" size={20} color="#4338ca" />
-                    <Text style={styles.secondaryActionButtonText}>Galería / Capturas</Text>
+                    <Text style={styles.secondaryActionButtonText}>Galería</Text>
                   </TouchableOpacity>
                 </View>
               )}
             </View>
 
-            {/* Lista de imágenes cargadas */}
+            {/* Miniaturas de imágenes */}
             {selectedImages.length > 0 && (
               <View style={styles.selectedImagesWrap}>
                 <Text style={styles.selectedCountText}>
                   {selectedImages.length} {selectedImages.length === 1 ? 'captura subida' : 'capturas subidas'}
                 </Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.thumbsScroll}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                   {selectedImages.map((img, i) => (
                     <View key={i} style={styles.thumbBox}>
-                      <Image
-                        source={{ uri: img.uri }}
-                        style={{ width: 80, height: 60, borderRadius: 6 }}
-                        resizeMode="cover"
-                      />
-                      <Text style={styles.thumbLabel} numberOfLines={1}>
-                        Placa {i + 1}
-                      </Text>
+                      <Image source={{ uri: img.uri }} style={{ width: 80, height: 60, borderRadius: 6 }} />
+                      <Text style={styles.thumbLabel}>Foto {i + 1}</Text>
                     </View>
                   ))}
                 </ScrollView>
               </View>
             )}
 
-            {/* Barra de progreso de escaneo */}
             {scanning && (
               <View style={styles.scanningWrap}>
                 <ActivityIndicator size="small" color="#4f46e5" />
@@ -379,88 +389,141 @@ export default function BambuScannerModal({ visible, onClose, onApplyToCalculato
             )}
           </View>
 
-          {/* Alerta de datos no leídos (no inventar datos) */}
-          {missingFieldsNotice.length > 0 && (
-            <View style={styles.warningAlert}>
-              <Ionicons name="alert-circle" size={22} color="#b45309" style={{ marginRight: 8 }} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.warningTitle}>Datos pendientes por ingresar</Text>
-                <Text style={styles.warningText}>
-                  No pudimos detectar con total certeza: {missingFieldsNotice.join(', ')}. Por favor revísalos e ingrésalos en el formulario a continuación.
-                </Text>
-              </View>
-            </View>
-          )}
+          {/* Selector de Modo: Placas vs Filamentos */}
+          <View style={styles.viewModeSelector}>
+            <TouchableOpacity
+              style={[styles.viewModeBtn, viewMode === 'plates' && styles.viewModeBtnActive]}
+              onPress={() => setViewMode('plates')}
+            >
+              <Ionicons
+                name="layers-outline"
+                size={16}
+                color={viewMode === 'plates' ? '#4f46e5' : '#64748b'}
+                style={{ marginRight: 6 }}
+              />
+              <Text style={[styles.viewModeBtnText, viewMode === 'plates' && styles.viewModeBtnTextActive]}>
+                Desglose por Placas ({platesList.length})
+              </Text>
+            </TouchableOpacity>
 
-          {/* Formulario de Revisión y Corrección de Datos */}
-          <View style={styles.card}>
-            <View style={styles.sectionHeaderRow}>
-              <Text style={styles.cardTitle}>2. Revisar y Corregir Datos Reconocidos</Text>
-              <TouchableOpacity
-                onPress={() => setManualMode(!manualMode)}
-                style={styles.textButton}
-              >
-                <Text style={styles.textButtonLabel}>
-                  {manualMode ? 'Ocultar extras' : 'Ingreso manual detallado'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.cardHint}>
-              Verifica los valores extraídos antes de aplicarlos. Todo es 100% editable.
-            </Text>
+            <TouchableOpacity
+              style={[styles.viewModeBtn, viewMode === 'colors' && styles.viewModeBtnActive]}
+              onPress={() => setViewMode('colors')}
+            >
+              <Ionicons
+                name="color-palette-outline"
+                size={16}
+                color={viewMode === 'colors' ? '#4f46e5' : '#64748b'}
+                style={{ marginRight: 6 }}
+              />
+              <Text style={[styles.viewModeBtnText, viewMode === 'colors' && styles.viewModeBtnTextActive]}>
+                Colores / Material ({reviewFilaments.length})
+              </Text>
+            </TouchableOpacity>
+          </View>
 
-            {/* Fila Tiempo y Placas */}
-            <View style={styles.rowTwoCols}>
-              <View style={styles.col}>
-                <Text style={styles.inputLabel}>Tiempo de Impresión</Text>
-                <View style={styles.timeInputsRow}>
-                  <View style={styles.timeInputBox}>
-                    <TextInput
-                      style={styles.timeInput}
-                      keyboardType="numeric"
-                      value={reviewTimeHours}
-                      onChangeText={setReviewTimeHours}
-                      placeholder="0"
-                    />
-                    <Text style={styles.timeUnit}>h</Text>
-                  </View>
-                  <View style={styles.timeInputBox}>
-                    <TextInput
-                      style={styles.timeInput}
-                      keyboardType="numeric"
-                      value={reviewTimeMinutes}
-                      onChangeText={setReviewTimeMinutes}
-                      placeholder="0"
-                    />
-                    <Text style={styles.timeUnit}>m</Text>
-                  </View>
+          {/* SECCIÓN 1: DESGLOSE POR PLACAS */}
+          {viewMode === 'plates' ? (
+            <View style={styles.card}>
+              <View style={styles.sectionHeaderRow}>
+                <View>
+                  <Text style={styles.cardTitle}>2. Placas del Trabajo</Text>
+                  <Text style={styles.cardHint}>
+                    Verifica el tiempo y los gramos de cada placa. La app suma todo automáticamente sin duplicar.
+                  </Text>
                 </View>
-              </View>
-
-              <View style={styles.col}>
-                <Text style={styles.inputLabel}>Número de Placas</Text>
-                <View style={styles.plateInputBox}>
-                  <TextInput
-                    style={styles.timeInput}
-                    keyboardType="numeric"
-                    value={reviewPlates}
-                    onChangeText={setReviewPlates}
-                    placeholder="1"
-                  />
-                  <Text style={styles.timeUnit}>placas</Text>
-                </View>
-              </View>
-            </View>
-
-            {/* Filamentos por Color en Gramos */}
-            <View style={styles.subSection}>
-              <View style={styles.subSectionHeader}>
-                <Text style={styles.subSectionTitle}>Filamento por Color (Gramos)</Text>
-                <TouchableOpacity onPress={handleAddFilamentRow} style={styles.addRowButton}>
+                <TouchableOpacity onPress={handleAddPlate} style={styles.addPlateBtn}>
                   <Ionicons name="add-circle" size={18} color="#4f46e5" />
-                  <Text style={styles.addRowButtonText}>Agregar Color</Text>
+                  <Text style={styles.addPlateBtnText}>+ Agregar Placa</Text>
                 </TouchableOpacity>
               </View>
+
+              {platesList.map((plate, index) => (
+                <View key={plate.id} style={styles.plateRowCard}>
+                  <View style={styles.plateHeaderRow}>
+                    <View style={styles.plateBadge}>
+                      <Text style={styles.plateBadgeText}>Placa #{index + 1}</Text>
+                    </View>
+                    <TextInput
+                      style={styles.plateNameInput}
+                      value={plate.name}
+                      onChangeText={(val) => handleUpdatePlate(plate.id, 'name', val)}
+                      placeholder="Nombre de placa..."
+                    />
+                    {platesList.length > 1 && (
+                      <TouchableOpacity onPress={() => handleRemovePlate(plate.id)} style={{ padding: 4 }}>
+                        <Ionicons name="trash-outline" size={18} color="#ef4444" />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  <View style={styles.plateInputsGrid}>
+                    <View style={styles.plateInputItem}>
+                      <Text style={styles.miniLabel}>Tiempo de esta placa</Text>
+                      <View style={styles.timeInputsRow}>
+                        <View style={styles.miniTimeBox}>
+                          <TextInput
+                            style={styles.timeInput}
+                            keyboardType="numeric"
+                            value={String(plate.hours)}
+                            onChangeText={(val) => handleUpdatePlate(plate.id, 'hours', parseInt(val, 10) || 0)}
+                            placeholder="0"
+                          />
+                          <Text style={styles.timeUnit}>h</Text>
+                        </View>
+                        <View style={styles.miniTimeBox}>
+                          <TextInput
+                            style={styles.timeInput}
+                            keyboardType="numeric"
+                            value={String(plate.minutes)}
+                            onChangeText={(val) => handleUpdatePlate(plate.id, 'minutes', parseInt(val, 10) || 0)}
+                            placeholder="0"
+                          />
+                          <Text style={styles.timeUnit}>m</Text>
+                        </View>
+                      </View>
+                    </View>
+
+                    <View style={styles.plateInputItem}>
+                      <Text style={styles.miniLabel}>Gramos usados (g)</Text>
+                      <View style={styles.gramsInputBox}>
+                        <TextInput
+                          style={styles.timeInput}
+                          keyboardType="numeric"
+                          value={String(plate.grams)}
+                          onChangeText={(val) => handleUpdatePlate(plate.id, 'grams', parseFloat(val) || 0)}
+                          placeholder="0.0"
+                        />
+                        <Text style={styles.timeUnit}>g</Text>
+                      </View>
+                    </View>
+                  </View>
+                </View>
+              ))}
+
+              {/* BANNER TOTAL CONSOLIDADO */}
+              <View style={styles.totalConsolidatedBanner}>
+                <View>
+                  <Text style={styles.totalConsolidatedLabel}>Total de las {platesList.length} placas:</Text>
+                  <Text style={styles.totalConsolidatedTime}>
+                    ⏱️ {formatHoursMinutes(totalHoursCombined, totalMinsRemainder)} de impresión
+                  </Text>
+                </View>
+                <View style={{ alignItems: 'flex-end' }}>
+                  <Text style={styles.totalConsolidatedLabel}>Filamento total:</Text>
+                  <Text style={styles.totalConsolidatedGrams}>
+                    ⚖️ {totalGramsFromPlatesCombined.toFixed(1)} g
+                  </Text>
+                </View>
+              </View>
+            </View>
+          ) : (
+            /* SECCIÓN 2: COLORES / FILAMENTOS */
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>2. Colores y Filamentos</Text>
+              <Text style={styles.cardHint}>
+                Desglose por color si utilizas varios materiales o sistema AMS multicolor.
+              </Text>
 
               {reviewFilaments.map((item, index) => (
                 <View key={item.id} style={styles.filamentEditRow}>
@@ -472,99 +535,58 @@ export default function BambuScannerModal({ visible, onClose, onApplyToCalculato
                     <TextInput
                       style={styles.miniInput}
                       value={item.name}
-                      onChangeText={(val) => handleUpdateFilamentRow(item.id, 'name', val)}
-                      placeholder="Ej: Negro, Dorado..."
+                      onChangeText={(val) => {
+                        setReviewFilaments((prev) =>
+                          prev.map((f) => (f.id === item.id ? { ...f, name: val } : f))
+                        );
+                      }}
+                      placeholder="Ej: Negro..."
                     />
                   </View>
-                  <View style={{ flex: 1.5, marginRight: 8 }}>
+                  <View style={{ flex: 1.5 }}>
                     <Text style={styles.miniLabel}>Gramos (g)</Text>
                     <TextInput
                       style={styles.miniInputNumber}
                       keyboardType="numeric"
                       value={item.grams}
-                      onChangeText={(val) => handleUpdateFilamentRow(item.id, 'grams', val)}
+                      onChangeText={(val) => {
+                        setReviewFilaments((prev) =>
+                          prev.map((f) => (f.id === item.id ? { ...f, grams: val } : f))
+                        );
+                      }}
                       placeholder="0.0"
                     />
                   </View>
-                  {reviewFilaments.length > 1 && (
-                    <TouchableOpacity
-                      onPress={() => handleRemoveFilamentRow(item.id)}
-                      style={styles.removeRowButton}
-                    >
-                      <Ionicons name="trash-outline" size={18} color="#ef4444" />
-                    </TouchableOpacity>
-                  )}
                 </View>
               ))}
             </View>
+          )}
 
-            {/* Regla Anti-Doble Conteo */}
-            <View style={styles.antiDoubleCountCard}>
-              <View style={styles.switchRow}>
-                <View style={{ flex: 1, paddingRight: 12 }}>
-                  <Text style={styles.switchTitle}>Evitar conteo doble de material</Text>
-                  <Text style={styles.switchSubtitle}>
-                    {isTotalAlreadyIncludingWaste
-                      ? 'Activado: Los gramos por color arriba YA incluyen purga, soportes y torre.'
-                      : 'Desactivado: Los soportes y purga se sumarán adicionalmente a los colores.'}
-                  </Text>
-                </View>
-                <Switch
-                  value={isTotalAlreadyIncludingWaste}
-                  onValueChange={setIsTotalAlreadyIncludingWaste}
-                  trackColor={{ false: '#cbd5e1', true: '#818cf8' }}
-                  thumbColor={isTotalAlreadyIncludingWaste ? '#4f46e5' : '#f8fafc'}
-                />
+          {/* Prevención de doble conteo */}
+          <View style={styles.antiDoubleCountCard}>
+            <View style={styles.switchRow}>
+              <View style={{ flex: 1, paddingRight: 12 }}>
+                <Text style={styles.switchTitle}>Evitar conteo doble de material</Text>
+                <Text style={styles.switchSubtitle}>
+                  Los gramos indicados arriba ya incluyen el modelo, soportes y purga de cada placa.
+                </Text>
               </View>
-
-              {/* Detalle opcional de soportes y purga */}
-              {(manualMode || !isTotalAlreadyIncludingWaste) && (
-                <View style={styles.wasteDetailGrid}>
-                  <View style={styles.wasteCol}>
-                    <Text style={styles.miniLabel}>Soportes (g)</Text>
-                    <TextInput
-                      style={styles.miniInputNumber}
-                      value={wasteSupport}
-                      onChangeText={setWasteSupport}
-                      keyboardType="numeric"
-                    />
-                  </View>
-                  <View style={styles.wasteCol}>
-                    <Text style={styles.miniLabel}>Purga / Flush (g)</Text>
-                    <TextInput
-                      style={styles.miniInputNumber}
-                      value={wasteFlush}
-                      onChangeText={setWasteFlush}
-                      keyboardType="numeric"
-                    />
-                  </View>
-                  <View style={styles.wasteCol}>
-                    <Text style={styles.miniLabel}>Torre (g)</Text>
-                    <TextInput
-                      style={styles.miniInputNumber}
-                      value={wasteTower}
-                      onChangeText={setWasteTower}
-                      keyboardType="numeric"
-                    />
-                  </View>
-                </View>
-              )}
+              <Switch
+                value={isTotalAlreadyIncludingWaste}
+                onValueChange={setIsTotalAlreadyIncludingWaste}
+                trackColor={{ false: '#cbd5e1', true: '#818cf8' }}
+                thumbColor={isTotalAlreadyIncludingWaste ? '#4f46e5' : '#f8fafc'}
+              />
             </View>
-
-            {/* Resumen Final Verificado */}
-            <View style={styles.totalBadgeBox}>
-              <Text style={styles.totalBadgeLabel}>Total a calcular:</Text>
-              <Text style={styles.totalBadgeValue}>
-                {calculateFinalTotalGrams().toFixed(1)} g en {formatHoursMinutes(reviewTimeHours, reviewTimeMinutes)} ({reviewPlates} {parseInt(reviewPlates, 10) === 1 ? 'placa' : 'placas'})
-              </Text>
-            </View>
-
-            {/* Botón de Aplicar */}
-            <TouchableOpacity style={styles.applyButton} onPress={handleApply}>
-              <Ionicons name="calculator-outline" size={22} color="#ffffff" style={{ marginRight: 8 }} />
-              <Text style={styles.applyButtonText}>Confirmar y Aplicar a Calculadora 3D</Text>
-            </TouchableOpacity>
           </View>
+
+          {/* Botón Aplicar a Calculadora */}
+          <TouchableOpacity style={styles.applyButton} onPress={handleApply}>
+            <Ionicons name="calculator" size={22} color="#ffffff" style={{ marginRight: 8 }} />
+            <Text style={styles.applyButtonText}>
+              Aplicar {platesList.length} {platesList.length === 1 ? 'Placa' : 'Placas'} a la Calculadora 3D
+            </Text>
+          </TouchableOpacity>
         </ScrollView>
       </View>
     </Modal>
@@ -626,7 +648,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontSize: 18,
-    fontWeight: '700',
+    fontWeight: '800',
     color: '#0f172a',
   },
   headerSubtitle: {
@@ -641,22 +663,7 @@ const styles = StyleSheet.create({
     maxWidth: 720,
     width: '100%',
     alignSelf: 'center',
-  },
-  privacyBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#ecfdf5',
-    borderWidth: 1,
-    borderColor: '#a7f3d0',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 16,
-  },
-  privacyText: {
-    flex: 1,
-    fontSize: 12,
-    color: '#065f46',
-    lineHeight: 18,
+    paddingBottom: 40,
   },
   card: {
     backgroundColor: '#ffffff',
@@ -673,7 +680,7 @@ const styles = StyleSheet.create({
   },
   cardTitle: {
     fontSize: 16,
-    fontWeight: '700',
+    fontWeight: '800',
     color: '#1e293b',
     marginBottom: 4,
   },
@@ -732,9 +739,6 @@ const styles = StyleSheet.create({
     color: '#475569',
     marginBottom: 8,
   },
-  thumbsScroll: {
-    flexDirection: 'row',
-  },
   thumbBox: {
     marginRight: 10,
     alignItems: 'center',
@@ -743,7 +747,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#64748b',
     marginTop: 4,
-    maxWidth: 80,
   },
   scanningWrap: {
     flexDirection: 'row',
@@ -759,117 +762,169 @@ const styles = StyleSheet.create({
     color: '#6d28d9',
     fontWeight: '500',
   },
-  warningAlert: {
+  viewModeSelector: {
     flexDirection: 'row',
-    backgroundColor: '#fffbeb',
-    borderWidth: 1,
-    borderColor: '#fde68a',
-    padding: 12,
+    backgroundColor: '#ffffff',
     borderRadius: 10,
+    padding: 4,
     marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    gap: 4,
   },
-  warningTitle: {
+  viewModeBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  viewModeBtnActive: {
+    backgroundColor: '#eef2ff',
+  },
+  viewModeBtnText: {
     fontSize: 13,
-    fontWeight: '700',
-    color: '#92400e',
-    marginBottom: 2,
+    fontWeight: '600',
+    color: '#64748b',
   },
-  warningText: {
-    fontSize: 12,
-    color: '#78350f',
-    lineHeight: 16,
+  viewModeBtnTextActive: {
+    color: '#4f46e5',
+    fontWeight: '700',
   },
   sectionHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+  },
+  addPlateBtn: {
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#eef2ff',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
   },
-  textButton: {
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-  },
-  textButtonLabel: {
+  addPlateBtnText: {
     fontSize: 12,
+    fontWeight: '700',
     color: '#4f46e5',
-    fontWeight: '600',
   },
-  rowTwoCols: {
+  plateRowCard: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  plateHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  plateBadge: {
+    backgroundColor: '#e0e7ff',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  plateBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#3730a3',
+  },
+  plateNameInput: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    fontSize: 13,
+    color: '#0f172a',
+  },
+  plateInputsGrid: {
     flexDirection: 'row',
     gap: 12,
-    marginBottom: 16,
   },
-  col: {
+  plateInputItem: {
     flex: 1,
   },
-  inputLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#334155',
-    marginBottom: 6,
+  miniLabel: {
+    fontSize: 11,
+    color: '#64748b',
+    marginBottom: 4,
+    fontWeight: '500',
   },
   timeInputsRow: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 6,
   },
-  timeInputBox: {
+  miniTimeBox: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#ffffff',
     borderWidth: 1,
     borderColor: '#cbd5e1',
-    borderRadius: 8,
-    paddingHorizontal: 8,
+    borderRadius: 6,
+    paddingHorizontal: 6,
   },
-  plateInputBox: {
+  gramsInputBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#ffffff',
     borderWidth: 1,
     borderColor: '#cbd5e1',
-    borderRadius: 8,
-    paddingHorizontal: 10,
+    borderRadius: 6,
+    paddingHorizontal: 8,
   },
   timeInput: {
     flex: 1,
-    paddingVertical: 10,
-    fontSize: 15,
+    paddingVertical: 6,
+    fontSize: 14,
     fontWeight: '700',
     color: '#0f172a',
     textAlign: 'center',
   },
   timeUnit: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
     color: '#64748b',
-    marginLeft: 4,
+    marginLeft: 2,
   },
-  subSection: {
-    marginBottom: 16,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#f1f5f9',
-  },
-  subSectionHeader: {
+  totalConsolidatedBanner: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
+    backgroundColor: '#eef2ff',
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: '#c7d2fe',
   },
-  subSectionTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#1e293b',
-  },
-  addRowButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  addRowButtonText: {
-    fontSize: 12,
+  totalConsolidatedLabel: {
+    fontSize: 11,
+    color: '#4338ca',
     fontWeight: '600',
-    color: '#4f46e5',
+  },
+  totalConsolidatedTime: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#1e1b4b',
+    marginTop: 2,
+  },
+  totalConsolidatedGrams: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#10b981',
+    marginTop: 2,
   },
   filamentEditRow: {
     flexDirection: 'row',
@@ -895,11 +950,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#4338ca',
   },
-  miniLabel: {
-    fontSize: 11,
-    color: '#64748b',
-    marginBottom: 2,
-  },
   miniInput: {
     backgroundColor: '#ffffff',
     borderWidth: 1,
@@ -921,9 +971,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#0f172a',
     textAlign: 'center',
-  },
-  removeRowButton: {
-    padding: 6,
   },
   antiDoubleCountCard: {
     backgroundColor: '#f8fafc',
@@ -949,37 +996,6 @@ const styles = StyleSheet.create({
     marginTop: 2,
     lineHeight: 15,
   },
-  wasteDetailGrid: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 12,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#e2e8f0',
-  },
-  wasteCol: {
-    flex: 1,
-  },
-  totalBadgeBox: {
-    backgroundColor: '#eef2ff',
-    borderRadius: 8,
-    padding: 12,
-    alignItems: 'center',
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#c7d2fe',
-  },
-  totalBadgeLabel: {
-    fontSize: 12,
-    color: '#4338ca',
-    fontWeight: '600',
-  },
-  totalBadgeValue: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#312e81',
-    marginTop: 2,
-  },
   applyButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -996,6 +1012,6 @@ const styles = StyleSheet.create({
   applyButtonText: {
     color: '#ffffff',
     fontSize: 15,
-    fontWeight: '700',
+    fontWeight: '800',
   },
 });
