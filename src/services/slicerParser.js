@@ -4,13 +4,84 @@
  */
 import { createWorker } from 'tesseract.js';
 
+/**
+ * Preprocesamiento de imagen en navegador:
+ * Si es tema oscuro (fondo oscuro con texto claro como Bambu Studio),
+ * invierte colores a texto negro sobre fondo blanco y aumenta contraste para OCR óptimo.
+ */
+async function preprocessImageForOCR(imageSource) {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return imageSource;
+  }
+  return new Promise((resolve) => {
+    try {
+      const img = new Image();
+      img.crossOrigin = 'Anonymous';
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          const scale = 1.5;
+          canvas.width = Math.round(img.width * scale);
+          canvas.height = Math.round(img.height * scale);
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return resolve(imageSource);
+
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const d = imgData.data;
+
+          let totalBrightness = 0;
+          const step = 4 * 16;
+          let samples = 0;
+          for (let i = 0; i < d.length; i += step) {
+            totalBrightness += (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114);
+            samples++;
+          }
+          const avgBrightness = samples > 0 ? totalBrightness / samples : 255;
+          const isDarkTheme = avgBrightness < 125;
+
+          if (isDarkTheme) {
+            for (let i = 0; i < d.length; i += 4) {
+              let gray = 255 - (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114);
+              gray = gray < 120 ? Math.max(0, gray - 50) : Math.min(255, gray + 50);
+              d[i] = gray;
+              d[i + 1] = gray;
+              d[i + 2] = gray;
+            }
+            ctx.putImageData(imgData, 0, 0);
+            resolve(canvas.toDataURL('image/png'));
+          } else {
+            resolve(imageSource);
+          }
+        } catch (e) {
+          resolve(imageSource);
+        }
+      };
+      img.onerror = () => resolve(imageSource);
+
+      if (typeof imageSource === 'string') {
+        img.src = imageSource;
+      } else if (imageSource instanceof Blob || (typeof File !== 'undefined' && imageSource instanceof File)) {
+        img.src = URL.createObjectURL(imageSource);
+      } else {
+        resolve(imageSource);
+      }
+    } catch (e) {
+      resolve(imageSource);
+    }
+  });
+}
+
 export async function extractTextFromImage(imageSource, onProgress = () => {}) {
   try {
-    onProgress({ status: 'Iniciando motor OCR local...', progress: 0.1 });
+    onProgress({ status: 'Preparando imagen y contraste...', progress: 0.1 });
+    const processedSource = await preprocessImageForOCR(imageSource);
+
+    onProgress({ status: 'Iniciando motor OCR local...', progress: 0.2 });
     const worker = await createWorker('spa+eng');
     
-    onProgress({ status: 'Analizando texto de la captura...', progress: 0.4 });
-    const ret = await worker.recognize(imageSource);
+    onProgress({ status: 'Analizando texto de la captura...', progress: 0.5 });
+    const ret = await worker.recognize(processedSource);
     
     onProgress({ status: 'Finalizando análisis...', progress: 0.9 });
     await worker.terminate();
@@ -83,6 +154,13 @@ export function parseBambuStudioText(rawText) {
     finalMinutes = bestMins % 60;
 
     finalGrams = Math.max(sumPlatesGrams, explicitTotalGrams);
+
+    // Si las placas individuales no traían gramos pero sí se detectó el total del trabajo,
+    // distribuir los gramos totales entre las placas para no dejarlas en 0
+    if (sumPlatesGrams === 0 && finalGrams > 0) {
+      const perPlateG = Number((finalGrams / platesList.length).toFixed(1));
+      platesList = platesList.map((p) => ({ ...p, grams: perPlateG }));
+    }
   } else {
     // Si no vino desglose por filas de placa, buscar "3 placas" o "Placa 1 de 3"
     const generalPlates = parseGeneralPlatesCount(normalizedText);

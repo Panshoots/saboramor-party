@@ -100,6 +100,11 @@ export default function Calculadora3DTab({
       setPlatesCount(String(count));
 
       if (incomingScannerData.platesDetail && incomingScannerData.platesDetail.length > 0) {
+        const sumGramsInPlates = incomingScannerData.platesDetail.reduce((acc, p) => acc + (parseFloat(p.grams) || 0), 0);
+        const fallbackGramsPerPlate = (sumGramsInPlates === 0 && incomingScannerData.totalGrams > 0)
+          ? Number((incomingScannerData.totalGrams / incomingScannerData.platesDetail.length).toFixed(1))
+          : null;
+
         setPlatesDetail(
           incomingScannerData.platesDetail.map((p, idx) => ({
             id: p.id || `p-${idx + 1}`,
@@ -107,7 +112,7 @@ export default function Calculadora3DTab({
             name: p.name || `Placa ${idx + 1}`,
             hours: String(p.hours ?? 0),
             minutes: String(p.minutes ?? 0),
-            grams: String(p.grams ?? 0),
+            grams: String(fallbackGramsPerPlate !== null ? fallbackGramsPerPlate : (p.grams ?? 0)),
           }))
         );
         setShowPlatesBreakdown(incomingScannerData.platesDetail.length > 1);
@@ -491,6 +496,23 @@ export default function Calculadora3DTab({
                 <Text style={styles.addPlateSmallBtnText}>+ Otra Placa</Text>
               </TouchableOpacity>
             </View>
+
+            {platesDetail.some((p) => parseFloat(p.grams) === 0) && (
+              <TouchableOpacity
+                onPress={() => {
+                  const perG = Number((totalFilamentGrams / platesDetail.length).toFixed(1));
+                  const updated = platesDetail.map((p) => ({ ...p, grams: String(perG) }));
+                  setPlatesDetail(updated);
+                  syncTotalsFromPlates(updated);
+                }}
+                style={styles.platesQuickDistributeBtn}
+              >
+                <Ionicons name="calculator-outline" size={14} color="#4f46e5" style={{ marginRight: 4 }} />
+                <Text style={styles.platesQuickDistributeBtnText}>
+                  Repartir {totalFilamentGrams.toFixed(1)}g de material entre las {platesDetail.length} placas
+                </Text>
+              </TouchableOpacity>
+            )}
 
             {platesDetail.map((plate, pIdx) => (
               <View key={plate.id} style={styles.plateItemBox}>
@@ -1653,5 +1675,22 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#e0e7ff',
     lineHeight: 16,
+  },
+  platesQuickDistributeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#eef2ff',
+    borderWidth: 1,
+    borderColor: '#c7d2fe',
+    borderRadius: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    marginBottom: 10,
+    alignSelf: 'flex-start',
+  },
+  platesQuickDistributeBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#4338ca',
   },
 });

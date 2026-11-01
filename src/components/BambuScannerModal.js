@@ -50,6 +50,8 @@ export default function BambuScannerModal({ visible, onClose, onApplyToCalculato
   const [wasteTower, setWasteTower] = useState('0.0');
   const [isTotalAlreadyIncludingWaste, setIsTotalAlreadyIncludingWaste] = useState(true);
   const [missingFieldsNotice, setMissingFieldsNotice] = useState([]);
+  const [rawOcrText, setRawOcrText] = useState('');
+  const [showRawOcr, setShowRawOcr] = useState(false);
 
   // Cálculos automáticos sumados de las placas
   const calculateTotalMinutesFromPlates = () => {
@@ -84,6 +86,15 @@ export default function BambuScannerModal({ visible, onClose, onApplyToCalculato
   const handleRemovePlate = (id) => {
     if (platesList.length <= 1) return;
     setPlatesList((prev) => prev.filter((p) => p.id !== id));
+  };
+
+  const handleDistributeGramsEqually = () => {
+    const totalG = totalGramsFromPlatesCombined > 0 
+      ? totalGramsFromPlatesCombined 
+      : (parseFloat(reviewFilaments[0]?.grams) || 60);
+    const count = Math.max(1, platesList.length);
+    const perG = Number((totalG / count).toFixed(1));
+    setPlatesList((prev) => prev.map((p) => ({ ...p, grams: perG })));
   };
 
   const handleUpdatePlate = (id, field, value) => {
@@ -165,6 +176,7 @@ export default function BambuScannerModal({ visible, onClose, onApplyToCalculato
     try {
       const parsedResults = [];
 
+      let fullRaw = '';
       for (let i = 0; i < imagesList.length; i++) {
         const item = imagesList[i];
         setScanStatusText(`Leyendo imagen ${i + 1} de ${imagesList.length}...`);
@@ -174,15 +186,23 @@ export default function BambuScannerModal({ visible, onClose, onApplyToCalculato
           setScanProgress(progress);
         });
 
+        fullRaw += (imagesList.length > 1 ? `--- Foto ${i + 1} ---\n` : '') + rawText + '\n\n';
         const parsed = parseBambuStudioText(rawText);
         parsedResults.push(parsed);
       }
+      setRawOcrText(fullRaw);
 
       const combined = combineMultipleSlicerResults(parsedResults);
 
       // Si detectó placas individuales
       if (combined.platesList && combined.platesList.length > 0) {
-        setPlatesList(combined.platesList);
+        const sumG = combined.platesList.reduce((acc, p) => acc + (parseFloat(p.grams) || 0), 0);
+        if (sumG === 0 && combined.totalGrams > 0) {
+          const perG = Number((combined.totalGrams / combined.platesList.length).toFixed(1));
+          setPlatesList(combined.platesList.map((p) => ({ ...p, grams: perG })));
+        } else {
+          setPlatesList(combined.platesList);
+        }
       } else if (combined.platesCount > 1) {
         const generated = [];
         const perPlateGrams = Number((combined.totalGrams / combined.platesCount).toFixed(1));
@@ -389,6 +409,35 @@ export default function BambuScannerModal({ visible, onClose, onApplyToCalculato
             )}
           </View>
 
+          {/* Texto OCR leído de la imagen (Colapsable para verificación) */}
+          {rawOcrText ? (
+            <View style={styles.rawOcrContainer}>
+              <TouchableOpacity
+                style={styles.rawOcrToggle}
+                onPress={() => setShowRawOcr(!showRawOcr)}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Ionicons name="document-text-outline" size={16} color="#4f46e5" style={{ marginRight: 6 }} />
+                  <Text style={styles.rawOcrToggleText}>
+                    {showRawOcr ? 'Ocultar texto leído de la foto' : '🔍 Ver texto exacto que leyó el escáner (OCR)'}
+                  </Text>
+                </View>
+                <Ionicons name={showRawOcr ? 'chevron-up' : 'chevron-down'} size={16} color="#64748b" />
+              </TouchableOpacity>
+
+              {showRawOcr && (
+                <View style={styles.rawOcrBox}>
+                  <Text style={styles.rawOcrHint}>
+                    Texto detectado por el motor en tu captura:
+                  </Text>
+                  <ScrollView style={styles.rawOcrScroll} nestedScrollEnabled>
+                    <Text style={styles.rawOcrContent}>{rawOcrText}</Text>
+                  </ScrollView>
+                </View>
+              )}
+            </View>
+          ) : null}
+
           {/* Selector de Modo: Placas vs Filamentos */}
           <View style={styles.viewModeSelector}>
             <TouchableOpacity
@@ -437,6 +486,21 @@ export default function BambuScannerModal({ visible, onClose, onApplyToCalculato
                   <Text style={styles.addPlateBtnText}>+ Agregar Placa</Text>
                 </TouchableOpacity>
               </View>
+
+              {/* Notificación si hay placas con 0g */}
+              {platesList.some((p) => parseFloat(p.grams) === 0) && (
+                <View style={styles.quickFixNotice}>
+                  <Ionicons name="information-circle" size={16} color="#d97706" style={{ marginRight: 6, marginTop: 2 }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.quickFixNoticeText}>
+                      Algunas placas se detectaron con 0g. Si el laminador no desgloza por placa, repártelo equitativamente:
+                    </Text>
+                    <TouchableOpacity onPress={handleDistributeGramsEqually} style={styles.quickFixBtn}>
+                      <Text style={styles.quickFixBtnText}>⚖️ Repartir filamento entre las placas</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
 
               {platesList.map((plate, index) => (
                 <View key={plate.id} style={styles.plateRowCard}>
@@ -1013,5 +1077,74 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 15,
     fontWeight: '800',
+  },
+  rawOcrContainer: {
+    backgroundColor: '#ffffff',
+    borderRadius: 10,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    overflow: 'hidden',
+  },
+  rawOcrToggle: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 12,
+    backgroundColor: '#f8fafc',
+  },
+  rawOcrToggleText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#4f46e5',
+  },
+  rawOcrBox: {
+    padding: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+    backgroundColor: '#0f172a',
+  },
+  rawOcrHint: {
+    fontSize: 11,
+    color: '#94a3b8',
+    marginBottom: 6,
+  },
+  rawOcrScroll: {
+    maxHeight: 140,
+  },
+  rawOcrContent: {
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    fontSize: 11,
+    color: '#38bdf8',
+    lineHeight: 16,
+  },
+  quickFixNotice: {
+    flexDirection: 'row',
+    backgroundColor: '#fffbeb',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#fde68a',
+    padding: 10,
+    marginBottom: 12,
+  },
+  quickFixNoticeText: {
+    fontSize: 12,
+    color: '#92400e',
+    lineHeight: 16,
+  },
+  quickFixBtn: {
+    backgroundColor: '#fef3c7',
+    borderWidth: 1,
+    borderColor: '#f59e0b',
+    borderRadius: 6,
+    paddingVertical: 5,
+    paddingHorizontal: 8,
+    alignSelf: 'flex-start',
+    marginTop: 6,
+  },
+  quickFixBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#b45309',
   },
 });
